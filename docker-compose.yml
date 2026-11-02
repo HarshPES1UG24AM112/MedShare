@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: medshare-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medshare
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-medshare_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - medshare-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d medshare"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  medshare-pgdata:
