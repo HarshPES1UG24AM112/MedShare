@@ -1,40 +1,30 @@
-import type { Role, Transfer, TransferAction, User } from '@/api/types';
+import type { Me, Permission, Role } from '@/api/types';
 
 /**
- * Client-side permission checks — used ONLY to decide what to show.
- * The backend remains the authority; every action still handles a 403.
+ * Client-side permission checks, driven entirely by the server's `Me`.
+ * They decide what to SHOW; the database re-checks every write, so each action still handles a 403.
+ * Transfer workflow buttons use the server's `allowedActions` instead of anything here.
  */
-export type Permission =
-  | 'facility:switch'
-  | 'medicine:create'
-  | 'inventory:write'
-  | 'transfer:request'
-  | 'audit:view';
 
-const MATRIX: Record<Role, Permission[]> = {
-  ADMIN: ['facility:switch', 'medicine:create', 'inventory:write', 'transfer:request', 'audit:view'],
-  FACILITY_MANAGER: ['medicine:create', 'inventory:write', 'transfer:request'],
-  PHARMACIST: ['inventory:write', 'transfer:request'],
-  VIEWER: [],
-};
+/** The user holds this permission somewhere (at any facility or through an organisation/platform role). */
+export const can = (user: Me | null | undefined, p: Permission) => !!user && user.permissions.includes(p);
 
-export const can = (user: User | null | undefined, p: Permission) => !!user && MATRIX[user.role].includes(p);
+/** The user holds this permission at a specific facility. */
+export const canAt = (user: Me | null | undefined, p: Permission, facilityId: number | undefined) =>
+  !!user && facilityId !== undefined && (user.facilityPermissions[String(facilityId)] ?? []).includes(p);
 
-export const canWriteAt = (user: User | null | undefined, facilityId: string) =>
-  !!user && can(user, 'inventory:write') && (user.role === 'ADMIN' || user.facilityId === facilityId);
+/** Facility ids where the user holds a permission, in scope order. */
+export const facilitiesWith = (user: Me | null | undefined, p: Permission): number[] =>
+  user ? user.scopeFacilityIds.filter((id) => canAt(user, p, id)) : [];
 
-/** Which transfer workflow actions the user may take right now. */
-export function transferActionsFor(user: User | null | undefined, t: Transfer): TransferAction[] {
-  if (!user || user.role === 'VIEWER') return [];
-  const admin = user.role === 'ADMIN';
-  const sourceManager = user.role === 'FACILITY_MANAGER' && user.facilityId === t.sourceFacility.id;
-  const atSource = admin || user.facilityId === t.sourceFacility.id;
-  const atDest = admin || user.facilityId === t.destinationFacility.id;
-  const out: TransferAction[] = [];
-  if (t.status === 'PENDING' && (admin || sourceManager)) out.push('approve', 'reject');
-  if (t.status === 'APPROVED' && (admin || sourceManager)) out.push('reject');
-  if (t.status === 'APPROVED' && atSource) out.push('dispatch');
-  if (t.status === 'DISPATCHED' && atDest) out.push('receive');
-  if (t.status === 'PENDING' && (admin || t.requestedBy.id === user.id)) out.push('cancel');
-  return out;
+/** Every role the user holds, organisation/platform and facility roles together. */
+export function rolesOf(user: Me | null | undefined): Role[] {
+  if (!user) return [];
+  const set = new Set<Role>([...user.roles.map((r) => r.role), ...user.facilities.map((f) => f.role)]);
+  return [...set];
 }
+
+export const hasRole = (user: Me | null | undefined, ...roles: Role[]) => rolesOf(user).some((r) => roles.includes(r));
+
+/** "Run engine" regenerates network recommendations: organisation or platform administrators only. */
+export const canRunEngine = (user: Me | null | undefined) => hasRole(user, 'ORG_ADMIN', 'SYSTEM_ADMIN') && can(user, 'recommendation:manage');

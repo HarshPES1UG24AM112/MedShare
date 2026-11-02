@@ -52,7 +52,7 @@ export function FilterSelect({
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value || undefined)}
       className={cn(
-        'h-9 rounded-md border bg-surface pr-7 pl-2.5 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none',
+        'h-9 max-w-full min-w-0 truncate rounded-md border bg-surface pr-7 pl-2.5 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25 focus:outline-none',
         value ? 'border-ink-700 text-ink-900' : 'border-line-strong text-ink-600',
       )}
     >

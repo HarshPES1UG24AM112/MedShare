@@ -11,7 +11,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Forward /api to Agent 1's backend when running with real services.
+    // Forward /api to the MedShare backend.
     proxy: {
       '/api': {
         target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:4000',
@@ -36,6 +36,5 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
-    env: { VITE_USE_MOCKS: 'true', VITE_MOCK_LATENCY_MS: '0' },
   },
 });

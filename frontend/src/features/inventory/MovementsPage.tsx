@@ -1,27 +1,32 @@
-import type { InventoryMovement, MovementType } from '@/api/types';
+import type { Movement, MovementType } from '@/api/types';
+import { useCurrentUser } from '@/auth/AuthContext';
 import { useFacilityScope } from '@/auth/FacilityScope';
-import { Badge, Card, DataTable, FilterSelect, PageHeader, Pagination, SearchInput, Toolbar, type Column } from '@/components/ui';
-import { useFacilities, useMovements } from '@/hooks/queries';
-import { useListParams } from '@/hooks/useListParams';
-import { fmtDateTime, fmtNumber } from '@/lib/format';
-import { MOVEMENT_LABEL } from '@/lib/labels';
-import { cn } from '@/lib/utils';
+import { Forbidden } from '@/auth/ProtectedRoute';
+import { Card, DataTable, FilterSelect, Input, PageHeader, Pagination, SearchInput, Toolbar, type Column } from '@/components/ui';
+import { useFacilityDirectory, useMovements } from '@/hooks/queries';
+import { toId, useListParams } from '@/hooks/useListParams';
+import { MOVEMENT_LABEL, options } from '@/lib/labels';
+import { movementColumns } from './BatchModals';
 
-const FILTERS = ['facility', 'type'] as const;
+const FILTERS = ['facility', 'type', 'from', 'to', 'inventoryId'] as const;
 
 export default function MovementsPage() {
+  const user = useCurrentUser();
   const scope = useFacilityScope();
   const lp = useListParams(FILTERS, { sortBy: 'createdAt', sortDir: 'desc' });
-  const facilities = useFacilities();
-  const q = useMovements({ ...lp.query, facilityId: lp.filters.facility ?? scope.facilityId, type: lp.filters.type as MovementType | undefined });
+  const { facilities } = useFacilityDirectory();
+  const q = useMovements({
+    ...lp.query,
+    facilityId: toId(lp.filters.facility) ?? scope.facilityId,
+    type: lp.filters.type as MovementType | undefined,
+    inventoryId: toId(lp.filters.inventoryId),
+    from: lp.filters.from,
+    to: lp.filters.to,
+  });
 
-  const columns: Column<InventoryMovement>[] = [
-    { key: 'when', header: 'Date', sortKey: 'createdAt', cell: (m) => <span className="tabular text-xs whitespace-nowrap text-ink-600">{fmtDateTime(m.createdAt)}</span> },
-    {
-      key: 'type',
-      header: 'Movement',
-      cell: (m) => <Badge tone={m.quantity > 0 ? 'success' : m.type === 'DAMAGE' || m.type === 'EXPIRED_WRITE_OFF' ? 'danger' : 'neutral'}>{MOVEMENT_LABEL[m.type]}</Badge>,
-    },
+  if (!user.permissions.includes('inventory:read')) return <Forbidden />;
+
+  const columns: Column<Movement>[] = [
     {
       key: 'medicine',
       header: 'Medicine',
@@ -29,49 +34,50 @@ export default function MovementsPage() {
       cell: (m) => (
         <div>
           <p className="font-medium text-ink-900">
-            {m.medicine.name} <span className="font-normal text-ink-500">{m.medicine.strength}</span>
+            {m.medicineName} <span className="font-normal text-ink-500">{m.strengthLabel}</span>
           </p>
-          <p className="tabular text-xs text-ink-500">Batch {m.batch.batchNumber}</p>
+          <p className="tabular text-xs text-ink-500">
+            {m.facilityCode} · batch {m.batchNumber}
+          </p>
         </div>
       ),
     },
-    { key: 'facility', header: 'Facility', hideOnMobile: true, cell: (m) => <span className="text-ink-700">{m.facility.name}</span> },
-    {
-      key: 'qty',
-      header: 'Quantity',
-      sortKey: 'quantity',
-      align: 'right',
-      cell: (m) => (
-        <span className={cn('tabular font-medium', m.quantity > 0 ? 'text-brand-700' : 'text-ink-900')}>
-          {m.quantity > 0 ? '+' : ''}
-          {fmtNumber(m.quantity)}
-        </span>
-      ),
-    },
-    { key: 'by', header: 'Recorded by', hideOnMobile: true, cell: (m) => <span className="text-xs text-ink-600">{m.performedBy.name}</span> },
-    { key: 'ref', header: 'Reference', hideOnMobile: true, cell: (m) => <span className="text-xs text-ink-500">{[m.reference, m.note].filter(Boolean).join(' · ') || '—'}</span> },
+    ...movementColumns.map((c) => (c.key === 'when' ? { ...c, sortKey: 'createdAt' } : c.key === 'type' ? { ...c, sortKey: 'type' } : c)),
   ];
 
   return (
     <>
-      <PageHeader title="Stock movements" description="Ledger of every receipt, issue, transfer and loss. Quantities are signed: + adds to available stock." />
+      <PageHeader
+        title="Stock movements"
+        description="The inventory ledger: every receipt, issue, reservation, transfer and loss. Balances change only through these movements."
+      />
       <Card>
         <Toolbar onClear={lp.clearFilters} showClear={lp.hasActiveFilters}>
           <SearchInput value={lp.search} onChange={lp.setSearch} placeholder="Search medicine, batch, reference…" />
-          <FilterSelect
-            label="Facility"
-            allLabel={scope.facilityId ? 'Current scope' : 'All'}
-            value={lp.filters.facility}
-            onChange={(v) => lp.setFilter('facility', v)}
-            options={(facilities.data ?? []).map((f) => ({ value: f.id, label: f.name }))}
-          />
-          <FilterSelect label="Type" value={lp.filters.type} onChange={(v) => lp.setFilter('type', v)} options={Object.entries(MOVEMENT_LABEL).map(([value, label]) => ({ value, label }))} />
+          {scope.scopeIds.length > 1 && (
+            <FilterSelect
+              label="Facility"
+              allLabel={scope.facilityId ? 'Current scope' : 'All in scope'}
+              value={lp.filters.facility}
+              onChange={(v) => lp.setFilter('facility', v)}
+              options={facilities.filter((f) => scope.scopeIds.includes(f.id)).map((f) => ({ value: String(f.id), label: `${f.code} · ${f.name}` }))}
+            />
+          )}
+          <FilterSelect label="Type" value={lp.filters.type} onChange={(v) => lp.setFilter('type', v)} options={options(MOVEMENT_LABEL)} />
+          <label className="flex items-center gap-1.5 text-xs text-ink-600">
+            From
+            <Input type="date" className="w-36" value={lp.filters.from ?? ''} onChange={(e) => lp.setFilter('from', e.target.value || undefined)} />
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-ink-600">
+            To
+            <Input type="date" className="w-36" value={lp.filters.to ?? ''} onChange={(e) => lp.setFilter('to', e.target.value || undefined)} />
+          </label>
         </Toolbar>
         <DataTable
           caption="Inventory movements"
           columns={columns}
           rows={q.data?.data}
-          rowKey={(m) => m.id}
+          rowKey={(m) => String(m.id)}
           loading={q.isLoading}
           error={q.error}
           onRetry={() => q.refetch()}

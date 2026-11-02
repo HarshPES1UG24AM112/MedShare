@@ -1,75 +1,73 @@
 # MedShare — Frontend
 
-React + TypeScript frontend for **MedShare**, a medicine inventory coordination platform for healthcare facilities. It covers monitoring stock, shortages and expiry, acting on redistribution recommendations, and running inter-facility transfers from request to receipt.
+React + TypeScript frontend for **MedShare**, a simulated medicine-inventory coordination platform for healthcare facilities. It covers stock, shortage and expiry monitoring, redistribution recommendations, stock requests, and inter-facility transfers from request to receipt.
 
-> Built by Agent 2 (frontend). The backend, database and `API_CONTRACT.md` are owned by Agent 1.
+It talks to the MedShare REST API (`backend/`, contract in [`../API_CONTRACT.md`](../API_CONTRACT.md)). There is no mock layer: every screen shows data from PostgreSQL through the API. Seeded data is **synthetic**, and the UI says so.
 
 ## Quick start
+
+The backend must be running first (see [`../backend/README.md`](../backend/README.md)): `npm run db:up`, `npm run db:reset`, then `npm run dev` in `backend/` (API on `http://localhost:4000/api/v1`).
 
 ```bash
 cd frontend
 npm install
-npm run dev          # http://localhost:5173 — uses mock services by default
+npm run dev          # http://localhost:5173, proxies /api to the backend
 ```
 
-### Demo accounts (mock mode only)
+### Demo accounts (development builds only)
 
-The sign-in page lists these accounts and fills them in with one click. They exist only in the in-browser mock.
+In `npm run dev`, the sign-in page lists synthetic seed accounts and fills them in with one click. The panel is guarded by `import.meta.env.DEV`, so production builds don't contain it. All use the password `MedShare@2026`.
 
-| Role | Email | Scope |
-|---|---|---|
-| Administrator | `admin@medshare.health` | All facilities, audit log, facility switcher |
-| Facility manager | `manager@medshare.health` | Central District Hospital; approves outgoing transfers |
-| Pharmacist | `pharmacist@medshare.health` | Hoskote PHC; requests, dispatches, receives |
-| Viewer | `viewer@medshare.health` | Whitefield CHC, read-only |
+| Account | Roles and scope |
+|---|---|
+| `admin@medshare.health` | System administrator: whole network, users, batches, audit; cannot approve transfers |
+| `auditor@medshare.health` | Platform auditor: read-only, whole network |
+| `org1.admin@medshare.health` … `org5.admin@…` | Organisation administrator: own organisation, organisation-stage approvals, "Run engine" |
+| `org2.auditor@medshare.health` | Auditor scoped to one organisation |
+| `fac-001.manager@medshare.health` … `fac-015.manager@…` | Facility manager: approves outgoing transfers, edits stock policy |
+| `fac-001.inventory@medshare.health` … `fac-015.inventory@…` | Inventory manager: receipts, dispensing, damage, requests, dispatch, receipt |
 
-Password for all of them: `MedShare@2026` (stored in `src/api/mock/demoAccounts.ts`).
+There is no self-registration; administrators create accounts on the **Users** page.
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Dev server with mock services |
-| `npm run dev:api` | Dev server against the real backend (`.env.api`, proxied to `VITE_PROXY_TARGET`) |
+| `npm run dev` | Dev server on :5173 with the `/api` proxy |
 | `npm run build` | Type-check and production build |
 | `npm run typecheck` | TypeScript only |
-| `npm test` | Vitest unit and component tests |
+| `npm test` | Vitest unit and component tests (the API module is mocked with `vi.mock`) |
 
 ## Configuration
 
-Copy `.env.example` to `.env.local`:
+Optional; copy `.env.example` to `.env.local`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VITE_USE_MOCKS` | `true` | `false` sends every call to the real API |
-| `VITE_API_BASE_URL` | `/api/v1` | API base path |
+| `VITE_API_BASE_URL` | `/api/v1` | API base path (relative paths go through the dev proxy) |
 | `VITE_PROXY_TARGET` | `http://localhost:4000` | Where the dev server proxies `/api` |
-| `VITE_MOCK_LATENCY_MS` | `350` | Simulated latency, so loading states are visible |
-
-## Mock data
-
-`src/api/mock` generates a **synthetic** network of 10 facilities, 32 essential medicines, batches, six months of movements, transfers and audit entries. Generation is deterministic and relative to today's date, so expiry windows always look current. The data is clearly labelled in the UI (a "Demo data" badge and a banner on Analytics). Mutations made in mock mode, such as transfers or receipts, update every derived view and persist until the page reloads.
 
 ## Features
 
-* **Dashboard**: action banner for critical issues, KPI tiles that link into filtered views, shortage and expiry alerts, inventory distribution, recent transfers and movements.
-* **Medicine catalogue**: search, filters, sorting and pagination; detail page with stock by facility and batches; add-medicine form.
-* **Stock & batches**: available, reserved and damaged quantities; receive stock; dispense, damage, correction and write-off adjustments; per-batch history.
-* **Stock movements**: full signed ledger.
-* **Facilities**: directory and detail with location, contact, KPIs and facility shortages.
-* **Shortages**: critical and low tabs, stock-vs-threshold gauges, days remaining, and a "Source stock" action.
-* **Expiry**: expired, ≤ 7, ≤ 30 and ≤ 60 day tabs, value at risk, redistribute or write off.
-* **Redistribution**: prioritised recommendations with route, distance, batch, expiry and reason; one click prefills a transfer request.
-* **Transfers**: status tabs, incoming/outgoing filter, a workflow dialog with stepper and timeline, and role-aware approve, reject, dispatch, receive and cancel actions.
-* **Analytics**: distribution, shortage risk, expiry profile, monthly movements, transfer volume and completion, stock by category. Every chart has a table view.
-* **Audit log** (admins): user, action, entity and timestamp, with filters and a date range.
+* **Dashboard**: action banner, KPI tiles linking into filtered views (shortages, expiry, pending / awaiting-dispatch / in-transit transfers, open recommendations and stock requests), shortage and expiry panels, inventory distribution, recent transfers and movements.
+* **Medicine catalogue**: search by name, code, substance or manufacturer; category (with sub-categories), form, manufacturer, essential and cold-chain filters; add-medicine form with an **ingredients editor** and substance autocomplete; detail page with ingredients, manufacturers, stock by facility and batches on hand.
+* **Batches**: network lots with expiry bucket and holdings; system administrators can quarantine, recall or reactivate a lot.
+* **Stock**: scoped inventory rows with available, reserved and damaged buckets; receive stock (creates the lot on first receipt); per-row dispense, damage, dispose, write-off and adjust; stock history from the ledger; "send to another facility".
+* **Stock movements**: the signed ledger, filterable by type, facility and date.
+* **Facilities**: directory with region (including sub-regions), organisation and type filters; detail with summary KPIs and shortages for in-scope facilities, plus a **stock-policy** tab, editable with `settings:manage`.
+* **Shortages**: critical and low tabs, stock-vs-threshold gauge, demand basis (measured, estimated-simulated, estimated-configured, possibly censored), acknowledge, and "Source stock".
+* **Expiry**: expired / 7 / 30 / 60-day windows with summary tiles, acknowledge, write-off for expired stock, and "Redistribute" for usable stock.
+* **Redistribution**: prioritised recommendations with explanation, distance, batch and staleness; accept (creates a PENDING transfer and opens it) or dismiss; "Run engine" for organisation and system administrators.
+* **Stock requests**: list by status and priority with derived received / in-progress / outstanding quantities; create, cancel, and "Source" a line into a linked transfer.
+* **Transfers**: active transfers with a "Needs my action" view; multi-item request dialog (pull into your facility from `/medicines/:id/sources`, or push out of it); detail with required stages, approvals, items, a LAG-derived timeline, and the actions in the server's `allowedActions`; receipt with per-line received and damaged quantities.
+* **Transfer history**: received, rejected and cancelled transfers with their timelines.
+* **Analytics**: distribution, regional availability (recursive rollup, filterable by medicine), expiry outlook, shortage risk, recurring shortages, wastage, transfer volume, timing and completion, stock movement, top consumed last month with month-over-month change, stock by category, transfer status and demand basis. Every chart has a table view, and the synthetic-data banner comes from `meta.synthetic`.
+* **Users**: create with organisation and facility roles, activate or deactivate, grant or revoke.
+* **Audit log**: append-only entries with before/after values.
+* **Notifications**: bell in the top bar with unread count and mark-as-read.
 
 ## Documentation
 
 * [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md): structure, state, routing, testing
 * [`docs/UI_COMPONENTS.md`](docs/UI_COMPONENTS.md): design tokens and component reference
-* [`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md): the endpoints the frontend expects, open questions for Agent 1, and the integration checklist
-
-## Integration status
-
-**Phase 8 (backend integration) is blocked.** `API_CONTRACT.md` doesn't exist yet. The frontend's expected contract is written up in `docs/API_INTEGRATION.md` for Agent 1 to confirm or correct.
+* [`docs/API_INTEGRATION.md`](docs/API_INTEGRATION.md): how the frontend uses the API (auth, scope, idempotency, errors, endpoint map)

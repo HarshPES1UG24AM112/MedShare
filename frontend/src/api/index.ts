@@ -1,14 +1,9 @@
-import { config } from '@/lib/config';
 import { httpApi } from './services/http';
-import { mockApi } from './mock/mockApi';
 import type { MedShareApi } from './services/types';
 
-/**
- * The one place that decides between mock and real services.
- * Toggle with VITE_USE_MOCKS (see .env.example). Nothing else imports mock code.
- */
-export const api: MedShareApi = config.useMocks ? mockApi : httpApi;
-export const usingMocks = config.useMocks;
+/** The MedShare REST client. Tests replace this module with vi.mock('@/api'). */
+export const api: MedShareApi = httpApi;
 
 export { ApiError } from './client';
+export { newIdempotencyKey } from './services/http';
 export type * from './types';

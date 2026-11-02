@@ -53,6 +53,8 @@ export function useListParams<F extends string>(filterKeys: readonly F[], defaul
     sortDir,
     search,
     filters,
+    /** Set several URL params at once (undefined removes one); resets to page 1. */
+    update,
     setPage: (p: number) => update({ page: p }, false),
     setPageSize: (s: number) => update({ size: s }),
     setSort: (by: string, dir: SortDirection) => update({ sort: by, dir }),
@@ -63,6 +65,12 @@ export function useListParams<F extends string>(filterKeys: readonly F[], defaul
     /** Ready-to-pass params for list services. */
     query: { page, pageSize, sortBy, sortDir, search: search || undefined },
   };
+}
+
+/** Parses a positive integer id from a URL/query value; anything else becomes undefined. */
+export function toId(v: string | undefined): number | undefined {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 export function useDebouncedValue<T>(value: T, ms = 300) {

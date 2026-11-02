@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
-import type { ShortageSeverity, TransferStatus } from '@/api/types';
-import { TRANSFER_STATUS_LABEL } from '@/lib/labels';
+import type { BatchStatus, DemandBasis, ShortageSeverity, StockStatus, TransferStatus } from '@/api/types';
+import { BATCH_STATUS_LABEL, DEMAND_BASIS_HINT, DEMAND_BASIS_LABEL, POSSIBLY_CENSORED_HINT, TRANSFER_STATUS_LABEL } from '@/lib/labels';
 
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'navy';
 
@@ -67,4 +67,36 @@ export function ExpiryBadge({ days }: { days: number }) {
   if (days <= 30) return <Badge tone="warning">≤ 30 days</Badge>;
   if (days <= 60) return <Badge tone="info">≤ 60 days</Badge>;
   return <Badge tone="success">In date</Badge>;
+}
+
+export function StockStatusBadge({ status }: { status: StockStatus | null | undefined }) {
+  if (!status) return <Badge>No policy</Badge>;
+  if (status === 'CRITICAL') return <SeverityBadge severity="CRITICAL" />;
+  if (status === 'LOW') return <SeverityBadge severity="LOW" />;
+  return (
+    <Badge tone="success" dot>
+      OK
+    </Badge>
+  );
+}
+
+export function BatchStatusBadge({ status }: { status: BatchStatus }) {
+  const tone: Tone = status === 'ACTIVE' ? 'success' : status === 'RECALLED' ? 'danger' : 'warning';
+  return <Badge tone={tone}>{BATCH_STATUS_LABEL[status]}</Badge>;
+}
+
+/** Where a daily-demand figure comes from; "possibly censored" means the history is unreliable (stock-out). */
+export function DemandBasisBadge({ basis, possiblyCensored }: { basis: DemandBasis; possiblyCensored?: boolean }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span title={DEMAND_BASIS_HINT[basis]}>
+        <Badge tone={basis === 'MEASURED' ? 'info' : 'neutral'}>{DEMAND_BASIS_LABEL[basis]}</Badge>
+      </span>
+      {possiblyCensored && (
+        <span title={POSSIBLY_CENSORED_HINT}>
+          <Badge tone="warning">Possibly censored</Badge>
+        </span>
+      )}
+    </span>
+  );
 }

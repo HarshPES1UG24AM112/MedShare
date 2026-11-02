@@ -6,17 +6,22 @@ import {
   Boxes,
   Building2,
   CalendarClock,
+  ClipboardList,
+  History,
   LayoutDashboard,
+  Layers,
   Pill,
   ScrollText,
   Shuffle,
   TriangleAlert,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react';
+import type { DashboardSummary, Me, Permission } from '@/api/types';
 import { useAuth } from '@/auth/AuthContext';
 import { useFacilityScope } from '@/auth/FacilityScope';
-import { can, type Permission } from '@/auth/permissions';
+import { can } from '@/auth/permissions';
 import { useDashboardSummary } from '@/hooks/queries';
 import { cn } from '@/lib/utils';
 import { Logo } from './Logo';
@@ -26,44 +31,52 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   permission?: Permission;
-  count?: (s: NonNullable<ReturnType<typeof useDashboardSummary>['data']>) => number;
+  visible?: (user: Me) => boolean;
+  count?: (s: DashboardSummary) => number;
   countTone?: 'danger' | 'warning' | 'neutral';
 }
 
+/** Scoped users see operational pages; inventory/report permissions cover every role that has a scope. */
 const NAV: { heading: string; items: NavItem[] }[] = [
   {
     heading: 'Overview',
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+      { to: '/analytics', label: 'Analytics', icon: BarChart3, permission: 'report:read' },
     ],
   },
   {
     heading: 'Inventory',
     items: [
       { to: '/medicines', label: 'Medicine catalogue', icon: Pill },
-      { to: '/inventory', label: 'Stock & batches', icon: Boxes },
+      { to: '/batches', label: 'Batches', icon: Layers },
+      { to: '/inventory', label: 'Stock', icon: Boxes, permission: 'inventory:read' },
+      { to: '/inventory/movements', label: 'Stock movements', icon: Activity, permission: 'inventory:read' },
       { to: '/facilities', label: 'Facilities', icon: Building2 },
     ],
   },
   {
     heading: 'Monitoring',
     items: [
-      { to: '/shortages', label: 'Shortages', icon: TriangleAlert, count: (s) => s.criticalShortages, countTone: 'danger' },
-      { to: '/expiry', label: 'Expiry', icon: CalendarClock, count: (s) => s.expiringBatches30d, countTone: 'warning' },
+      { to: '/shortages', label: 'Shortages', icon: TriangleAlert, permission: 'inventory:read', count: (s) => s.criticalShortages, countTone: 'danger' },
+      { to: '/expiry', label: 'Expiry', icon: CalendarClock, permission: 'inventory:read', count: (s) => s.expiringBatches30d, countTone: 'warning' },
     ],
   },
   {
     heading: 'Coordination',
     items: [
-      { to: '/redistribution', label: 'Redistribution', icon: Shuffle },
-      { to: '/transfers', label: 'Transfers', icon: ArrowLeftRight, count: (s) => s.pendingTransfers, countTone: 'neutral' },
-      { to: '/inventory/movements', label: 'Stock movements', icon: Activity },
+      { to: '/redistribution', label: 'Redistribution', icon: Shuffle, permission: 'inventory:read', count: (s) => s.openRecommendations, countTone: 'neutral' },
+      { to: '/stock-requests', label: 'Stock requests', icon: ClipboardList, permission: 'inventory:read', count: (s) => s.openStockRequests, countTone: 'neutral' },
+      { to: '/transfers', label: 'Transfers', icon: ArrowLeftRight, permission: 'inventory:read', count: (s) => s.pendingTransfers, countTone: 'neutral' },
+      { to: '/transfers/history', label: 'Transfer history', icon: History, permission: 'inventory:read' },
     ],
   },
   {
     heading: 'Administration',
-    items: [{ to: '/audit', label: 'Audit log', icon: ScrollText, permission: 'audit:view' }],
+    items: [
+      { to: '/users', label: 'Users', icon: Users, permission: 'user:manage' },
+      { to: '/audit', label: 'Audit log', icon: ScrollText, permission: 'audit:read' },
+    ],
   },
 ];
 
@@ -90,7 +103,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </div>
         <nav className="scrollbar-thin flex-1 overflow-y-auto px-3 pt-2 pb-4">
           {NAV.map((group) => {
-            const items = group.items.filter((i) => !i.permission || can(user, i.permission));
+            const items = group.items.filter((i) => (!i.permission || can(user, i.permission)) && (!i.visible || (user && i.visible(user))));
             if (!items.length) return null;
             return (
               <div key={group.heading} className="mb-4">
@@ -102,7 +115,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                       <li key={item.to}>
                         <NavLink
                           to={item.to}
-                          end={item.to === '/' || item.to === '/inventory'}
+                          end={item.to === '/' || item.to === '/inventory' || item.to === '/transfers'}
                           onClick={onClose}
                           className={({ isActive }) =>
                             cn(
@@ -138,7 +151,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             );
           })}
         </nav>
-        <div className="border-t border-white/10 px-4 py-3 text-[11px] text-ink-500">MedShare · v0.1.0</div>
+        <div className="border-t border-white/10 px-4 py-3 text-[11px] text-ink-500">MedShare · v0.1.0 · synthetic data</div>
       </aside>
     </>
   );

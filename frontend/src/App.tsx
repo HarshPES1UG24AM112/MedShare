@@ -9,7 +9,6 @@ import { AppShell } from '@/components/layout/AppShell';
 import { ToastProvider } from '@/components/ui';
 import { createQueryClient } from '@/lib/queryClient';
 import { LoginPage } from '@/features/auth/LoginPage';
-import { RegisterPage } from '@/features/auth/RegisterPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { NotFoundPage } from '@/features/NotFoundPage';
 
@@ -24,6 +23,10 @@ const ExpiryPage = lazy(() => import('@/features/expiry/ExpiryPage'));
 const ShortagesPage = lazy(() => import('@/features/shortages/ShortagesPage'));
 const RedistributionPage = lazy(() => import('@/features/redistribution/RedistributionPage'));
 const TransfersPage = lazy(() => import('@/features/transfers/TransfersPage'));
+const TransferHistoryPage = lazy(() => import('@/features/transfers/TransferHistoryPage'));
+const BatchesPage = lazy(() => import('@/features/batches/BatchesPage'));
+const UsersPage = lazy(() => import('@/features/users/UsersPage'));
+const StockRequestsPage = lazy(() => import('@/features/stock-requests/StockRequestsPage'));
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage'));
 const AuditPage = lazy(() => import('@/features/audit/AuditPage'));
 
@@ -44,7 +47,6 @@ export function App() {
           <AuthProvider>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
               <Route element={<ProtectedRoute />}>
                 <Route
                   element={
@@ -63,12 +65,16 @@ export function App() {
                   <Route path="expiry" element={<ExpiryPage />} />
                   <Route path="shortages" element={<ShortagesPage />} />
                   <Route path="redistribution" element={<RedistributionPage />} />
+                  <Route path="batches" element={<BatchesPage />} />
+                  <Route path="stock-requests" element={<StockRequestsPage />} />
                   <Route path="transfers" element={<TransfersPage />} />
+                  <Route path="transfers/history" element={<TransferHistoryPage />} />
+                  <Route path="users" element={<UsersPage />} />
                   <Route path="analytics" element={<AnalyticsPage />} />
                   <Route
                     path="audit"
                     element={
-                      <RequirePermission permission="audit:view">
+                      <RequirePermission permission="audit:read">
                         <AuditPage />
                       </RequirePermission>
                     }

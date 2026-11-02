@@ -1,66 +1,79 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ApiError } from '@/api';
-import type { Batch, InventoryMovement } from '@/api/types';
+import { ApiError, newIdempotencyKey } from '@/api';
+import type { InventoryRow, Movement, StockAction } from '@/api/types';
 import { useCurrentUser } from '@/auth/AuthContext';
+import { facilitiesWith } from '@/auth/permissions';
 import { Badge, Button, DataTable, FormField, Input, Modal, Pagination, Select, Textarea, useToast, type Column } from '@/components/ui';
-import { useAdjustStock, useFacilities, useMedicines, useMovements, useReceiveBatch } from '@/hooks/queries';
-import { daysUntil, fmtDate, fmtDateTime, fmtNumber, todayISODate } from '@/lib/format';
-import { MOVEMENT_LABEL } from '@/lib/labels';
+import { useFacilityDirectory, useManufacturers, useMedicines, useMovements, useReceiveStock, useStockAction } from '@/hooks/queries';
+import { fmtDate, fmtDateTime, fmtNumber, todayISODate } from '@/lib/format';
+import { MOVEMENT_LABEL, MOVEMENT_TONE } from '@/lib/labels';
 import { cn } from '@/lib/utils';
 
 /* --------------------------------- Receive -------------------------------- */
 
 const receiveSchema = z
   .object({
-    facilityId: z.string().min(1, 'Select a facility'),
-    medicineId: z.string().min(1, 'Select a medicine'),
+    facilityId: z.coerce.number({ invalid_type_error: 'Select a facility' }).int().positive('Select a facility'),
+    medicineId: z.coerce.number({ invalid_type_error: 'Select a medicine' }).int().positive('Select a medicine'),
+    manufacturerId: z.coerce.number({ invalid_type_error: 'Select a manufacturer' }).int().positive('Select a manufacturer'),
     batchNumber: z
       .string()
       .trim()
-      .min(3, 'At least 3 characters')
-      .max(30)
-      .regex(/^[A-Za-z0-9-]+$/, 'Letters, numbers and dashes only'),
+      .toUpperCase()
+      .regex(/^[A-Z0-9][A-Z0-9-]{2,29}$/, 'Letters, digits and dashes (3–30)'),
     manufactureDate: z.string().min(1, 'Required'),
     expiryDate: z.string().min(1, 'Required'),
-    quantity: z.coerce.number({ invalid_type_error: 'Enter a quantity' }).int('Whole units only').positive('Must be at least 1').max(1_000_000),
-    unitCost: z.coerce.number({ invalid_type_error: 'Enter a cost' }).nonnegative('Cannot be negative'),
+    quantity: z.coerce.number({ invalid_type_error: 'Enter a quantity' }).int('Whole units only').positive('Must be at least 1').max(10_000_000),
+    unitCost: z.coerce.number({ invalid_type_error: 'Enter a cost' }).min(0, 'Cannot be negative').max(1_000_000),
+    reference: z.string().trim().max(60).optional(),
   })
   .refine((v) => v.manufactureDate <= todayISODate(), { path: ['manufactureDate'], message: 'Cannot be in the future' })
-  .refine((v) => v.expiryDate > todayISODate(), { path: ['expiryDate'], message: 'Batch is already expired' })
-  .refine((v) => v.expiryDate > v.manufactureDate, { path: ['expiryDate'], message: 'Must be after manufacture date' });
+  .refine((v) => v.expiryDate > v.manufactureDate, { path: ['expiryDate'], message: 'Must be after the manufacture date' });
 
-type ReceiveValues = z.infer<typeof receiveSchema>;
+type ReceiveIn = z.input<typeof receiveSchema>;
+type ReceiveOut = z.output<typeof receiveSchema>;
 
-export function ReceiveBatchModal({ open, onClose, facilityId }: { open: boolean; onClose: () => void; facilityId?: string }) {
+export function ReceiveStockModal({ open, onClose, facilityId }: { open: boolean; onClose: () => void; facilityId?: number }) {
   const user = useCurrentUser();
   const toast = useToast();
-  const receive = useReceiveBatch();
-  const facilities = useFacilities();
+  const receive = useReceiveStock();
+  const { facilities } = useFacilityDirectory();
   const medicines = useMedicines({ pageSize: 100, sortBy: 'name' });
-  const defaultFacility = facilityId ?? user.facilityId ?? '';
+  const manufacturers = useManufacturers();
+  const writable = facilitiesWith(user, 'inventory:write');
+  const defaultFacility = facilityId && writable.includes(facilityId) ? facilityId : writable.length === 1 ? writable[0] : undefined;
+  const [formError, setFormError] = useState<string | null>(null);
+  const idemKey = useRef(newIdempotencyKey());
+  const empty = { facilityId: defaultFacility ?? '', unitCost: 0, batchNumber: '', manufactureDate: '', expiryDate: '', reference: '' } as unknown as ReceiveIn;
   const {
     register,
     handleSubmit,
     reset,
     setError,
     formState: { errors },
-  } = useForm<ReceiveValues>({ resolver: zodResolver(receiveSchema), defaultValues: { facilityId: defaultFacility, unitCost: 0 } });
+  } = useForm<ReceiveIn, unknown, ReceiveOut>({ resolver: zodResolver(receiveSchema), defaultValues: empty });
 
   useEffect(() => {
-    if (open) reset({ facilityId: defaultFacility, unitCost: 0 });
-  }, [open, defaultFacility, reset]);
+    if (!open) return;
+    reset(empty);
+    setFormError(null);
+    idemKey.current = newIdempotencyKey();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultFacility]);
 
   const onSubmit = handleSubmit(async (v) => {
+    setFormError(null);
     try {
-      const b = await receive.mutateAsync(v);
-      toast.success('Stock received', `${fmtNumber(b.quantityAvailable)} × ${b.medicine.name} added as batch ${b.batchNumber}.`);
+      const row = await receive.mutateAsync({ input: { ...v, reference: v.reference || undefined }, opts: { idempotencyKey: idemKey.current } });
+      toast.success('Stock received', `${fmtNumber(v.quantity)} × ${row.medicineName}, batch ${row.batchNumber}, at ${row.facilityCode}.`);
       onClose();
     } catch (e) {
-      if (e instanceof ApiError && e.details) for (const [f, m] of Object.entries(e.details)) setError(f as keyof ReceiveValues, { message: m[0] });
-      toast.error('Could not receive stock', e instanceof ApiError ? e.message : undefined);
+      if (e instanceof ApiError && e.status !== 0 && e.status < 500) idemKey.current = newIdempotencyKey();
+      if (e instanceof ApiError && e.details) for (const [f, m] of Object.entries(e.details)) setError(f as keyof ReceiveIn, { message: m[0] });
+      setFormError(e instanceof ApiError ? e.message : 'Could not record the receipt.');
     }
   });
 
@@ -69,209 +82,268 @@ export function ReceiveBatchModal({ open, onClose, facilityId }: { open: boolean
       open={open}
       onClose={onClose}
       title="Receive stock"
-      description="Record a goods receipt as a new batch."
+      description="Record a goods receipt. The batch is created on its first receipt; later receipts of the same lot add to it."
+      size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="receive-batch" loading={receive.isPending}>
+          <Button type="submit" form="receive-stock" loading={receive.isPending}>
             Record receipt
           </Button>
         </>
       }
     >
-      <form id="receive-batch" onSubmit={onSubmit} noValidate className="grid gap-4 sm:grid-cols-2">
-        <FormField label="Facility" htmlFor="facilityId" error={errors.facilityId?.message} required className="sm:col-span-2">
-          {user.role === 'ADMIN' ? (
-            <Select id="facilityId" invalid={!!errors.facilityId} {...register('facilityId')}>
-              <option value="">Select facility…</option>
-              {facilities.data?.map((f) => (
+      {formError && (
+        <p role="alert" className="mb-4 rounded-md border border-danger-100 bg-danger-50 p-3 text-xs text-danger-700">
+          {formError}
+        </p>
+      )}
+      <form id="receive-stock" onSubmit={onSubmit} noValidate className="grid gap-4 sm:grid-cols-2">
+        <FormField label="Facility" htmlFor="facilityId" error={errors.facilityId?.message} required>
+          <Select id="facilityId" invalid={!!errors.facilityId} {...register('facilityId')}>
+            <option value="">Select…</option>
+            {facilities
+              .filter((f) => writable.includes(f.id))
+              .map((f) => (
                 <option key={f.id} value={f.id}>
-                  {f.name}
+                  {f.code} · {f.name}
                 </option>
               ))}
-            </Select>
-          ) : (
-            <>
-              <Input id="facilityId" readOnly value={facilities.data?.find((f) => f.id === defaultFacility)?.name ?? ''} className="bg-subtle" />
-              <input type="hidden" {...register('facilityId')} />
-            </>
-          )}
+          </Select>
         </FormField>
-        <FormField label="Medicine" htmlFor="medicineId" error={errors.medicineId?.message} required className="sm:col-span-2">
+        <FormField label="Medicine" htmlFor="medicineId" error={errors.medicineId?.message} required>
           <Select id="medicineId" invalid={!!errors.medicineId} {...register('medicineId')}>
-            <option value="">Select medicine…</option>
+            <option value="">{medicines.isLoading ? 'Loading…' : 'Select…'}</option>
             {medicines.data?.data.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.name} {m.strength}
+                {m.displayName}
               </option>
             ))}
           </Select>
         </FormField>
-        <FormField label="Batch number" htmlFor="batchNumber" error={errors.batchNumber?.message} required>
-          <Input id="batchNumber" invalid={!!errors.batchNumber} {...register('batchNumber')} />
+        <FormField label="Manufacturer" htmlFor="manufacturerId" error={errors.manufacturerId?.message} required>
+          <Select id="manufacturerId" invalid={!!errors.manufacturerId} {...register('manufacturerId')}>
+            <option value="">Select…</option>
+            {manufacturers.data?.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </Select>
         </FormField>
-        <FormField label="Quantity received" htmlFor="quantity" error={errors.quantity?.message} required>
-          <Input id="quantity" type="number" min={1} inputMode="numeric" invalid={!!errors.quantity} {...register('quantity')} />
+        <FormField label="Batch / lot number" htmlFor="batchNumber" error={errors.batchNumber?.message} required>
+          <Input id="batchNumber" className="uppercase" invalid={!!errors.batchNumber} placeholder="PAR2611-0001" {...register('batchNumber')} />
         </FormField>
         <FormField label="Manufacture date" htmlFor="manufactureDate" error={errors.manufactureDate?.message} required>
           <Input id="manufactureDate" type="date" max={todayISODate()} invalid={!!errors.manufactureDate} {...register('manufactureDate')} />
         </FormField>
         <FormField label="Expiry date" htmlFor="expiryDate" error={errors.expiryDate?.message} required>
-          <Input id="expiryDate" type="date" min={todayISODate()} invalid={!!errors.expiryDate} {...register('expiryDate')} />
+          <Input id="expiryDate" type="date" invalid={!!errors.expiryDate} {...register('expiryDate')} />
         </FormField>
-        <FormField label="Unit cost (₹)" htmlFor="unitCost" error={errors.unitCost?.message}>
+        <FormField label="Quantity (issue units)" htmlFor="quantity" error={errors.quantity?.message} required>
+          <Input id="quantity" type="number" min={1} inputMode="numeric" invalid={!!errors.quantity} {...register('quantity')} />
+        </FormField>
+        <FormField label="Unit cost (INR)" htmlFor="unitCost" error={errors.unitCost?.message} required>
           <Input id="unitCost" type="number" min={0} step="0.01" inputMode="decimal" invalid={!!errors.unitCost} {...register('unitCost')} />
+        </FormField>
+        <FormField label="Reference" htmlFor="reference" error={errors.reference?.message} hint="Invoice or delivery note number" className="sm:col-span-2">
+          <Input id="reference" {...register('reference')} />
         </FormField>
       </form>
     </Modal>
   );
 }
 
-/* --------------------------------- Adjust --------------------------------- */
+/* ------------------------------- Stock actions ------------------------------ */
 
-const adjustSchema = z.object({
-  type: z.enum(['DISPENSE', 'DAMAGE', 'CORRECTION', 'WRITE_OFF']),
-  direction: z.enum(['INCREASE', 'DECREASE']),
-  quantity: z.coerce.number({ invalid_type_error: 'Enter a quantity' }).int('Whole units only').positive('Must be at least 1'),
-  reason: z.string().trim().min(3, 'Give a short reason').max(200),
-});
-type AdjustValues = z.infer<typeof adjustSchema>;
+export const ACTION_META: Record<StockAction, { title: string; description: string; verb: string; needsReason: boolean; button: string }> = {
+  dispense: { title: 'Dispense', description: 'Issue usable stock to patients or wards.', verb: 'dispensed', needsReason: false, button: 'Record dispensing' },
+  damage: { title: 'Record damage', description: 'Move usable units to the damaged bucket.', verb: 'marked damaged', needsReason: true, button: 'Record damage' },
+  dispose: { title: 'Dispose damaged stock', description: 'Destroy units already recorded as damaged.', verb: 'disposed', needsReason: true, button: 'Record disposal' },
+  'write-off': { title: 'Write off expired stock', description: 'Remove expired units from usable inventory. Only expired batches can be written off.', verb: 'written off', needsReason: false, button: 'Write off' },
+  adjust: { title: 'Stock-count adjustment', description: 'Correct the usable quantity after a physical count. Use a negative number to decrease.', verb: 'adjusted', needsReason: true, button: 'Apply adjustment' },
+};
 
-export function AdjustStockModal({ batch, onClose }: { batch: Batch | null; onClose: () => void }) {
+/** Which actions make sense for a row right now (the database still validates each one). */
+export function availableActions(r: InventoryRow): StockAction[] {
+  const out: StockAction[] = [];
+  const expired = r.expiryBucket === 'EXPIRED';
+  if (!expired && r.qtyAvailable > 0 && r.batchStatus === 'ACTIVE') out.push('dispense');
+  if (r.qtyAvailable > 0) out.push('damage');
+  if (r.qtyDamaged > 0) out.push('dispose');
+  if (expired && r.qtyAvailable > 0) out.push('write-off');
+  out.push('adjust');
+  return out;
+}
+
+export function StockActionModal({ row, action, onClose }: { row: InventoryRow | null; action: StockAction | null; onClose: () => void }) {
   const toast = useToast();
-  const adjust = useAdjustStock();
-  const {
-    register,
-    handleSubmit,
-    watch,
-    reset,
-    setError,
-    formState: { errors },
-  } = useForm<AdjustValues>({ resolver: zodResolver(adjustSchema), defaultValues: { type: 'DISPENSE', direction: 'DECREASE', reason: '' } });
+  const act = useStockAction();
+  const [quantity, setQuantity] = useState('');
+  const [text, setText] = useState('');
+  const [errors, setErrors] = useState<{ quantity?: string; text?: string; form?: string }>({});
+  const idemKey = useRef(newIdempotencyKey());
+  const open = !!row && !!action;
 
-  const expired = !!batch && daysUntil(batch.expiryDate) < 0;
   useEffect(() => {
-    if (batch)
-      reset(
-        daysUntil(batch.expiryDate) < 0
-          ? { type: 'WRITE_OFF', direction: 'DECREASE', reason: 'Expired — removed from usable stock', quantity: batch.quantityAvailable }
-          : { type: 'DISPENSE', direction: 'DECREASE', reason: '' },
-      );
-  }, [batch, reset]);
+    if (!open) return;
+    setQuantity(action === 'write-off' && row ? String(row.qtyAvailable) : '');
+    setText('');
+    setErrors({});
+    idemKey.current = newIdempotencyKey();
+  }, [open, action, row]);
 
-  const type = watch('type');
-  const direction = watch('direction');
+  if (!row || !action) return null;
+  const meta = ACTION_META[action];
+  const max = action === 'dispose' ? row.qtyDamaged : row.qtyAvailable;
 
-  const onSubmit = handleSubmit(async (v) => {
-    if (!batch) return;
-    const decreasing = v.type !== 'CORRECTION' || v.direction === 'DECREASE';
-    if (decreasing && v.quantity > batch.quantityAvailable) {
-      setError('quantity', { message: `Only ${fmtNumber(batch.quantityAvailable)} available` });
-      return;
-    }
+  const submit = async () => {
+    const n = Number(quantity);
+    const errs: typeof errors = {};
+    if (action === 'adjust') {
+      if (!Number.isInteger(n) || n === 0) errs.quantity = 'Enter a non-zero whole number';
+      else if (n < 0 && -n > row.qtyAvailable) errs.quantity = `Cannot remove more than the ${fmtNumber(row.qtyAvailable)} available`;
+    } else if (!Number.isInteger(n) || n < 1) errs.quantity = 'Whole units, at least 1';
+    else if (n > max) errs.quantity = `Only ${fmtNumber(max)} ${action === 'dispose' ? 'damaged' : 'available'}`;
+    if (meta.needsReason && text.trim().length < 3) errs.text = 'Give a short reason (3+ characters)';
+    setErrors(errs);
+    if (Object.keys(errs).length) return;
+    const input =
+      action === 'dispense'
+        ? { action, quantity: n, reference: text.trim() || undefined }
+        : action === 'write-off'
+          ? { action, quantity: n, reason: text.trim() || undefined }
+          : action === 'adjust'
+            ? { action, delta: n, reason: text.trim() }
+            : { action, quantity: n, reason: text.trim() };
     try {
-      await adjust.mutateAsync({ batchId: batch.id, input: { type: v.type, quantity: v.quantity, direction: v.type === 'CORRECTION' ? v.direction : undefined, reason: v.reason } });
-      toast.success('Stock updated', `Batch ${batch.batchNumber}: ${decreasing ? '−' : '+'}${fmtNumber(v.quantity)} (${MOVEMENT_LABEL[v.type === 'WRITE_OFF' ? 'EXPIRED_WRITE_OFF' : v.type].toLowerCase()}).`);
+      await act.mutateAsync({ inventoryId: row.inventoryId, input, opts: { idempotencyKey: idemKey.current } });
+      toast.success(`Stock ${meta.verb}`, `${row.medicineName}, batch ${row.batchNumber} at ${row.facilityCode}.`);
       onClose();
     } catch (e) {
-      if (e instanceof ApiError && e.details) for (const [f, m] of Object.entries(e.details)) setError(f as keyof AdjustValues, { message: m[0] });
-      toast.error('Adjustment failed', e instanceof ApiError ? e.message : undefined);
+      idemKey.current = newIdempotencyKey();
+      setErrors({ form: e instanceof ApiError ? e.message : 'The stock change failed.' });
     }
-  });
+  };
 
   return (
     <Modal
-      open={!!batch}
+      open={open}
       onClose={onClose}
-      title="Adjust stock"
-      description={batch && `${batch.medicine.name} ${batch.medicine.strength} · Batch ${batch.batchNumber} · ${fmtNumber(batch.quantityAvailable)} available`}
+      title={meta.title}
+      description={meta.description}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="adjust-stock" variant={type === 'DAMAGE' ? 'danger' : 'primary'} loading={adjust.isPending}>
-            Record {{ DISPENSE: 'issue', DAMAGE: 'damage', CORRECTION: 'correction', WRITE_OFF: 'write-off' }[type]}
+          <Button variant={action === 'damage' || action === 'dispose' || action === 'write-off' ? 'danger' : 'primary'} loading={act.isPending} onClick={submit}>
+            {meta.button}
           </Button>
         </>
       }
     >
-      <form id="adjust-stock" onSubmit={onSubmit} noValidate className="grid gap-4 sm:grid-cols-2">
-        <FormField label="Adjustment type" htmlFor="type" required>
-          <Select id="type" {...register('type')}>
-            {expired ? (
-              <option value="WRITE_OFF">Expiry write-off</option>
-            ) : (
-              <>
-                <option value="DISPENSE">Dispense / issue to ward</option>
-                <option value="DAMAGE">Damaged / unusable</option>
-              </>
-            )}
-            <option value="CORRECTION">Stock-count correction</option>
-          </Select>
-        </FormField>
-        {type === 'CORRECTION' ? (
-          <FormField label="Direction" htmlFor="direction" required>
-            <Select id="direction" {...register('direction')}>
-              <option value="DECREASE">Decrease (count was lower)</option>
-              <option value="INCREASE">Increase (count was higher)</option>
-            </Select>
-          </FormField>
-        ) : (
-          <div className="hidden sm:block" />
+      <div className="space-y-4">
+        <div className="rounded-lg border border-line bg-subtle/60 p-3 text-sm">
+          <p className="font-medium text-ink-900">{row.medicineName}</p>
+          <p className="tabular mt-0.5 text-xs text-ink-600">
+            {row.facilityCode} · batch {row.batchNumber} · exp {fmtDate(row.expiryDate)}
+          </p>
+          <p className="tabular mt-1.5 text-xs text-ink-600">
+            Available <span className="font-medium text-ink-900">{fmtNumber(row.qtyAvailable)}</span> · Reserved {fmtNumber(row.qtyReserved)} · Damaged {fmtNumber(row.qtyDamaged)}
+          </p>
+        </div>
+        {errors.form && (
+          <p role="alert" className="rounded-md border border-danger-100 bg-danger-50 p-3 text-xs text-danger-700">
+            {errors.form}
+          </p>
         )}
         <FormField
-          label="Quantity"
-          htmlFor="adj-quantity"
-          error={errors.quantity?.message}
-          hint={type !== 'CORRECTION' || direction === 'DECREASE' ? `Max ${fmtNumber(batch?.quantityAvailable ?? 0)}` : undefined}
+          label={action === 'adjust' ? 'Change in usable units (±)' : 'Quantity'}
+          htmlFor="stock-qty"
+          error={errors.quantity}
+          hint={action === 'adjust' ? 'e.g. -12 after a count found 12 fewer units' : `Up to ${fmtNumber(max)}`}
           required
         >
-          <Input id="adj-quantity" type="number" min={1} inputMode="numeric" invalid={!!errors.quantity} {...register('quantity')} />
+          <Input id="stock-qty" type="number" inputMode="numeric" min={action === 'adjust' ? undefined : 1} max={action === 'adjust' ? undefined : max} invalid={!!errors.quantity} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
         </FormField>
-        <FormField label="Reason" htmlFor="reason" error={errors.reason?.message} required className="sm:col-span-2">
-          <Textarea id="reason" rows={2} invalid={!!errors.reason} placeholder={type === 'DAMAGE' ? 'e.g. vials cracked during cold-chain excursion' : 'e.g. OPD issue, ward 3'} {...register('reason')} />
+        <FormField
+          label={action === 'dispense' ? 'Reference (optional)' : meta.needsReason ? 'Reason' : 'Reason (optional)'}
+          htmlFor="stock-text"
+          error={errors.text}
+          required={meta.needsReason}
+        >
+          {action === 'dispense' ? (
+            <Input id="stock-text" maxLength={60} value={text} onChange={(e) => setText(e.target.value)} placeholder="Ward, prescription or OPD reference" />
+          ) : (
+            <Textarea id="stock-text" rows={2} maxLength={300} invalid={!!errors.text} value={text} onChange={(e) => setText(e.target.value)} />
+          )}
         </FormField>
-      </form>
+      </div>
     </Modal>
   );
 }
 
-/* --------------------------------- History -------------------------------- */
+/* ---------------------------------- History --------------------------------- */
 
-export function BatchHistoryModal({ batch, onClose }: { batch: Batch | null; onClose: () => void }) {
+const signed = (n: number) => (n > 0 ? `+${fmtNumber(n)}` : n < 0 ? `−${fmtNumber(-n)}` : '0');
+
+export const movementColumns: Column<Movement>[] = [
+  { key: 'when', header: 'When', cell: (m) => <span className="text-xs whitespace-nowrap text-ink-600">{fmtDateTime(m.createdAt)}</span> },
+  { key: 'type', header: 'Type', cell: (m) => <Badge tone={MOVEMENT_TONE[m.movementType]}>{MOVEMENT_LABEL[m.movementType]}</Badge> },
+  {
+    key: 'deltas',
+    header: 'Available / reserved / damaged',
+    align: 'right',
+    cell: (m) => (
+      <span className="tabular text-xs whitespace-nowrap">
+        {[m.deltaAvailable, m.deltaReserved, m.deltaDamaged].map((d, i) => (
+          <span key={i} className={cn(i > 0 && 'ml-2', d > 0 ? 'text-brand-700' : d < 0 ? 'text-danger-600' : 'text-ink-400')}>
+            {signed(d)}
+          </span>
+        ))}
+      </span>
+    ),
+  },
+  {
+    key: 'detail',
+    header: 'Detail',
+    hideOnMobile: true,
+    cell: (m) => (
+      <span className="text-xs text-ink-600">
+        {[m.transferCode, m.reason, m.reference].filter(Boolean).join(' · ') || '—'}
+        {m.performedByName && <span className="block text-ink-400">by {m.performedByName}</span>}
+      </span>
+    ),
+  },
+];
+
+export function StockHistoryModal({ row, onClose }: { row: InventoryRow | null; onClose: () => void }) {
   const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [batch?.id]);
-  const q = useMovements({ batchId: batch?.id, page, pageSize: 10 }, !!batch);
-  const columns: Column<InventoryMovement>[] = [
-    { key: 'when', header: 'Date', cell: (m) => <span className="text-xs whitespace-nowrap text-ink-600">{fmtDateTime(m.createdAt)}</span> },
-    { key: 'type', header: 'Movement', cell: (m) => <Badge tone={m.quantity > 0 ? 'success' : m.type === 'DAMAGE' ? 'danger' : 'neutral'}>{MOVEMENT_LABEL[m.type]}</Badge> },
-    {
-      key: 'qty',
-      header: 'Qty',
-      align: 'right',
-      cell: (m) => (
-        <span className={cn('tabular font-medium', m.quantity > 0 ? 'text-brand-700' : 'text-ink-900')}>
-          {m.quantity > 0 ? '+' : ''}
-          {fmtNumber(m.quantity)}
-        </span>
-      ),
-    },
-    { key: 'by', header: 'By', hideOnMobile: true, cell: (m) => <span className="text-xs text-ink-600">{m.performedBy.name}</span> },
-    { key: 'ref', header: 'Reference / note', hideOnMobile: true, cell: (m) => <span className="text-xs text-ink-500">{[m.reference, m.note].filter(Boolean).join(' · ') || '—'}</span> },
-  ];
+  useEffect(() => setPage(1), [row?.inventoryId]);
+  const q = useMovements({ inventoryId: row?.inventoryId, page, pageSize: 10, sortBy: 'createdAt', sortDir: 'desc' }, !!row);
   return (
     <Modal
-      open={!!batch}
+      open={!!row}
       onClose={onClose}
       size="lg"
-      title={`Stock history · Batch ${batch?.batchNumber ?? ''}`}
-      description={batch && `${batch.medicine.name} ${batch.medicine.strength} at ${batch.facility.name} · received ${fmtDate(batch.receivedAt)} · expires ${fmtDate(batch.expiryDate)}`}
+      title="Stock history"
+      description={row && `${row.medicineName} · batch ${row.batchNumber} · ${row.facilityCode}. Every change is a ledger movement with signed bucket deltas.`}
     >
       <div className="-mx-5 -my-4">
-        <DataTable columns={columns} rows={q.data?.data} rowKey={(m) => m.id} loading={q.isLoading} error={q.error} onRetry={() => q.refetch()} skeletonRows={5} empty={{ title: 'No movements recorded for this batch' }} />
+        <DataTable
+          caption="Stock movements for this batch"
+          columns={movementColumns}
+          rows={q.data?.data}
+          rowKey={(m) => String(m.id)}
+          loading={q.isLoading}
+          error={q.error}
+          onRetry={() => q.refetch()}
+          skeletonRows={5}
+          empty={{ title: 'No movements recorded' }}
+        />
         <Pagination meta={q.data?.meta} onPageChange={setPage} />
       </div>
     </Modal>

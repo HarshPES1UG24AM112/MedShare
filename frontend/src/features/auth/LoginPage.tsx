@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { AlertCircle, Eye, EyeOff, FlaskConical } from 'lucide-react';
-import { ApiError, usingMocks } from '@/api';
-import { DEMO_ACCOUNTS } from '@/api/mock/demoAccounts';
+import { ApiError } from '@/api';
 import { useAuth } from '@/auth/AuthContext';
 import { Button, FormField, Input } from '@/components/ui';
 import { AuthLayout } from './AuthLayout';
+import { DEMO_ACCOUNTS, DEMO_PASSWORD } from './demoAccounts';
 
 const schema = z.object({
   email: z.string().trim().min(1, 'Email is required').email('Enter a valid email address'),
@@ -76,17 +76,12 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
-      <p className="mt-6 text-center text-xs text-ink-500">
-        New to MedShare?{' '}
-        <Link to="/register" className="font-medium text-brand-700 hover:underline">
-          Request an account
-        </Link>
-      </p>
+      <p className="mt-6 text-center text-xs text-ink-500">Accounts are created by your MedShare administrator.</p>
 
-      {usingMocks && (
+      {import.meta.env.DEV && (
         <div className="mt-8 rounded-lg border border-line bg-subtle/60 p-3">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-ink-700">
-            <FlaskConical className="size-3.5 text-warning-700" /> Demo accounts (mock mode only)
+            <FlaskConical className="size-3.5 text-warning-700" /> Synthetic demo accounts (development build only)
           </p>
           <div className="grid grid-cols-2 gap-1.5">
             {DEMO_ACCOUNTS.map((a) => (
@@ -95,7 +90,7 @@ export function LoginPage() {
                 type="button"
                 onClick={() => {
                   setValue('email', a.email, { shouldValidate: true });
-                  setValue('password', a.password, { shouldValidate: true });
+                  setValue('password', DEMO_PASSWORD, { shouldValidate: true });
                 }}
                 className="rounded-md border border-line bg-surface px-2 py-1.5 text-left text-xs hover:border-line-strong"
               >

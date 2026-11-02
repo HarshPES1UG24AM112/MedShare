@@ -1,61 +1,82 @@
 import { describe, expect, it } from 'vitest';
-import type { Transfer, TransferStatus, User } from '@/api/types';
-import { can, canWriteAt, transferActionsFor } from './permissions';
+import type { Me } from '@/api/types';
+import { can, canAt, canRunEngine, facilitiesWith, hasRole, rolesOf } from './permissions';
 
-const user = (role: User['role'], facilityId: string | null = 'fac-A', id = 'u1'): User => ({ id, name: 'Test', email: 't@x', role, facilityId });
+/** Shapes taken from real /auth/me responses for the seeded demo accounts. */
+const facilityManager: Me = {
+  id: 13,
+  email: 'fac-001.manager@medshare.health',
+  fullName: 'Kavya Menon (Synthetic)',
+  roles: [],
+  facilities: [{ facilityId: 3, facilityCode: 'FAC-001', facilityName: 'Bengaluru Central District Hospital', role: 'FACILITY_MANAGER' }],
+  scopeFacilityIds: [3],
+  platformScope: false,
+  permissions: ['inventory:read', 'inventory:write', 'recommendation:manage', 'report:read', 'request:create', 'settings:manage', 'transfer:approve', 'transfer:dispatch', 'transfer:receive', 'transfer:request'],
+  facilityPermissions: {
+    '3': ['inventory:read', 'inventory:write', 'recommendation:manage', 'report:read', 'request:create', 'settings:manage', 'transfer:approve', 'transfer:dispatch', 'transfer:receive', 'transfer:request'],
+  },
+};
 
-const transfer = (status: TransferStatus, requestedBy = 'u-req'): Transfer => ({
-  id: 't1',
-  code: 'TRF-1',
-  status,
-  medicine: { id: 'm', name: 'M', strength: '1', unit: 'tab' },
-  batch: { id: 'b', batchNumber: 'B1', expiryDate: '2030-01-01' },
-  sourceFacility: { id: 'fac-A', name: 'A', code: 'A' },
-  destinationFacility: { id: 'fac-B', name: 'B', code: 'B' },
-  quantity: 10,
-  requestedBy: { id: requestedBy, name: 'R' },
-  createdAt: '',
-  updatedAt: '',
-  history: [],
+const sysAdmin: Me = {
+  id: 1,
+  email: 'admin@medshare.health',
+  fullName: 'Asha Raman (Synthetic)',
+  roles: [{ role: 'SYSTEM_ADMIN', organizationId: null, organizationName: null }],
+  facilities: [],
+  scopeFacilityIds: [1, 2, 3],
+  platformScope: true,
+  permissions: ['audit:read', 'batch:manage', 'catalogue:manage', 'facility:manage', 'inventory:read', 'organization:manage', 'recommendation:manage', 'report:read', 'user:manage'],
+  facilityPermissions: {
+    '1': ['audit:read', 'inventory:read', 'report:read'],
+    '2': ['audit:read', 'inventory:read', 'report:read'],
+    '3': ['audit:read', 'inventory:read', 'report:read'],
+  },
+};
+
+const orgAdmin: Me = {
+  ...sysAdmin,
+  id: 5,
+  roles: [{ role: 'ORG_ADMIN', organizationId: 1, organizationName: 'Deccan Public Health Network (Synthetic)' }],
+  permissions: ['audit:read', 'catalogue:manage', 'facility:manage', 'inventory:read', 'recommendation:manage', 'report:read', 'transfer:approve_org', 'user:manage'],
+  platformScope: false,
+};
+
+describe('can / canAt', () => {
+  it('reads permissions from the server, not from a role table', () => {
+    expect(can(facilityManager, 'transfer:approve')).toBe(true);
+    expect(can(facilityManager, 'audit:read')).toBe(false);
+    expect(can(sysAdmin, 'user:manage')).toBe(true);
+    expect(can(null, 'inventory:read')).toBe(false);
+  });
+
+  it('checks facility-level permissions against facilityPermissions', () => {
+    expect(canAt(facilityManager, 'inventory:write', 3)).toBe(true);
+    expect(canAt(facilityManager, 'inventory:write', 4)).toBe(false);
+    expect(canAt(facilityManager, 'inventory:write', undefined)).toBe(false);
+  });
+
+  it('never lets a platform administrator write stock (no inventory:write anywhere)', () => {
+    expect(canAt(sysAdmin, 'inventory:write', 1)).toBe(false);
+    expect(facilitiesWith(sysAdmin, 'transfer:request')).toEqual([]);
+  });
+
+  it('lists the facilities where a permission is held, in scope order', () => {
+    expect(facilitiesWith(facilityManager, 'transfer:request')).toEqual([3]);
+    expect(facilitiesWith(sysAdmin, 'inventory:read')).toEqual([1, 2, 3]);
+  });
 });
 
-describe('can', () => {
-  it('restricts audit and facility switching to admins', () => {
-    expect(can(user('ADMIN', null), 'audit:view')).toBe(true);
-    expect(can(user('FACILITY_MANAGER'), 'audit:view')).toBe(false);
-    expect(can(user('PHARMACIST'), 'facility:switch')).toBe(false);
+describe('roles', () => {
+  it('merges organisation and facility roles', () => {
+    expect(rolesOf(facilityManager)).toEqual(['FACILITY_MANAGER']);
+    expect(rolesOf(sysAdmin)).toEqual(['SYSTEM_ADMIN']);
+    expect(hasRole(orgAdmin, 'ORG_ADMIN', 'SYSTEM_ADMIN')).toBe(true);
   });
-  it('gives viewers no write permissions', () => {
-    expect(can(user('VIEWER'), 'transfer:request')).toBe(false);
-    expect(can(user('VIEWER'), 'inventory:write')).toBe(false);
-  });
-  it('limits inventory writes to the user facility', () => {
-    expect(canWriteAt(user('PHARMACIST', 'fac-A'), 'fac-A')).toBe(true);
-    expect(canWriteAt(user('PHARMACIST', 'fac-A'), 'fac-B')).toBe(false);
-    expect(canWriteAt(user('ADMIN', null), 'fac-B')).toBe(true);
-  });
-});
 
-describe('transferActionsFor', () => {
-  it('lets the source facility manager approve or reject a pending transfer', () => {
-    expect(transferActionsFor(user('FACILITY_MANAGER', 'fac-A'), transfer('PENDING'))).toEqual(['approve', 'reject']);
-  });
-  it('does not let the destination manager approve', () => {
-    expect(transferActionsFor(user('FACILITY_MANAGER', 'fac-B'), transfer('PENDING'))).toEqual([]);
-  });
-  it('lets source staff dispatch an approved transfer', () => {
-    expect(transferActionsFor(user('PHARMACIST', 'fac-A'), transfer('APPROVED'))).toEqual(['dispatch']);
-  });
-  it('lets destination staff receive a dispatched transfer', () => {
-    expect(transferActionsFor(user('PHARMACIST', 'fac-B'), transfer('DISPATCHED'))).toEqual(['receive']);
-  });
-  it('lets the requester cancel only while pending', () => {
-    const me = user('PHARMACIST', 'fac-B', 'u-req');
-    expect(transferActionsFor(me, transfer('PENDING', 'u-req'))).toEqual(['cancel']);
-    expect(transferActionsFor(me, transfer('APPROVED', 'u-req'))).toEqual([]);
-  });
-  it('offers nothing on closed transfers or to viewers', () => {
-    expect(transferActionsFor(user('ADMIN', null), transfer('RECEIVED'))).toEqual([]);
-    expect(transferActionsFor(user('VIEWER', 'fac-A'), transfer('PENDING'))).toEqual([]);
+  it('shows "Run engine" only to organisation or platform administrators', () => {
+    expect(canRunEngine(sysAdmin)).toBe(true);
+    expect(canRunEngine(orgAdmin)).toBe(true);
+    // A facility manager has recommendation:manage but is not an org/platform admin.
+    expect(canRunEngine(facilityManager)).toBe(false);
   });
 });
