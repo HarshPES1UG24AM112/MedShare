@@ -18,17 +18,53 @@ SELECT
   i.qty_reserved,
   i.qty_damaged,
   i.updated_at,
-  (b.expiry_date - fn_today()) AS days_to_expiry,
+  (
+    b.expiry_date - (
+      SELECT
+        fn_today() AS fn_today
+    )
+  ) AS days_to_expiry,
   CASE
-    WHEN (b.expiry_date < fn_today()) THEN 'EXPIRED' :: text
-    WHEN (b.expiry_date <= (fn_today() + 7)) THEN 'WITHIN_7_DAYS' :: text
-    WHEN (b.expiry_date <= (fn_today() + 30)) THEN 'WITHIN_30_DAYS' :: text
-    WHEN (b.expiry_date <= (fn_today() + 60)) THEN 'WITHIN_60_DAYS' :: text
+    WHEN (
+      b.expiry_date < (
+        SELECT
+          fn_today() AS fn_today
+      )
+    ) THEN 'EXPIRED' :: text
+    WHEN (
+      b.expiry_date <= (
+        (
+          SELECT
+            fn_today() AS fn_today
+        ) + 7
+      )
+    ) THEN 'WITHIN_7_DAYS' :: text
+    WHEN (
+      b.expiry_date <= (
+        (
+          SELECT
+            fn_today() AS fn_today
+        ) + 30
+      )
+    ) THEN 'WITHIN_30_DAYS' :: text
+    WHEN (
+      b.expiry_date <= (
+        (
+          SELECT
+            fn_today() AS fn_today
+        ) + 60
+      )
+    ) THEN 'WITHIN_60_DAYS' :: text
     ELSE 'HEALTHY' :: text
   END AS expiry_bucket,
   (
     (b.status = 'ACTIVE' :: batch_status)
-    AND (b.expiry_date >= fn_today())
+    AND (
+      b.expiry_date >= (
+        SELECT
+          fn_today() AS fn_today
+      )
+    )
   ) AS is_usable,
   round(((i.qty_available) :: numeric * b.unit_cost), 2) AS available_value
 FROM

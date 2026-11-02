@@ -9,21 +9,25 @@ SELECT
       (fs.usable > 0)
   ) AS facilities_holding,
   min(fs.nearest_usable_expiry) AS nearest_expiry,
-  (
-    SELECT
-      count(*) AS count
-    FROM
-      v_shortage_status ss
-    WHERE
-      (
-        (ss.medicine_id = m.id)
-        AND (ss.stock_status <> 'OK' :: text)
-      )
-  ) AS facilities_short
+  COALESCE(sh.n, (0) :: bigint) AS facilities_short
 FROM
   (
-    medicines m
-    LEFT JOIN v_facility_stock fs ON ((fs.medicine_id = m.id))
+    (
+      medicines m
+      LEFT JOIN v_facility_stock fs ON ((fs.medicine_id = m.id))
+    )
+    LEFT JOIN (
+      SELECT
+        v_shortage_status.medicine_id,
+        count(*) AS n
+      FROM
+        v_shortage_status
+      WHERE
+        (v_shortage_status.stock_status <> 'OK' :: text)
+      GROUP BY
+        v_shortage_status.medicine_id
+    ) sh ON ((sh.medicine_id = m.id))
   )
 GROUP BY
-  m.id;
+  m.id,
+  sh.n;
