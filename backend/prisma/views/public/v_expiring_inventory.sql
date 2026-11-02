@@ -1,0 +1,31 @@
+SELECT
+  inventory_id,
+  facility_id,
+  facility_code,
+  facility_name,
+  organization_id,
+  batch_id,
+  batch_number,
+  medicine_id,
+  medicine_code,
+  medicine_name,
+  manufacturer,
+  manufacture_date,
+  expiry_date,
+  unit_cost,
+  batch_status,
+  qty_available,
+  qty_reserved,
+  qty_damaged,
+  updated_at,
+  days_to_expiry,
+  expiry_bucket,
+  is_usable,
+  available_value
+FROM
+  v_inventory_detail
+WHERE
+  (
+    (expiry_bucket <> 'HEALTHY' :: text)
+    AND ((qty_available + qty_reserved) > 0)
+  );

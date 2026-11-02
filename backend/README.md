@@ -8,7 +8,8 @@ PostgreSQL-first backend for **MedShare**, a simulated medicine-inventory coordi
 |---|---|---|
 | 1 — Requirements & database design | ✅ approved | [docs/PHASE1_DATABASE_DESIGN.md](docs/PHASE1_DATABASE_DESIGN.md) |
 | 2 — Database implementation | ✅ complete (99 tests passing) | [docs/PHASE2_IMPLEMENTATION.md](docs/PHASE2_IMPLEMENTATION.md) |
-| 3 — Express API | next | — |
+| 3 — Express API | ✅ complete (49 API tests passing) | [../API_CONTRACT.md](../API_CONTRACT.md) |
+| 4 — Frontend integration | next | — |
 
 ## Prerequisites
 
@@ -25,6 +26,8 @@ npm install
 npm run db:up                 # starts PostgreSQL 16 on localhost:5433 and waits until healthy
 npm run db:reset              # drop schema → apply migrations → load synthetic seed (~20 s)
 npm run db:test               # 77 SQL integrity checks + 22 multi-connection concurrency checks
+npm run dev                   # API on http://localhost:4000/api/v1 (tsx watch)
+npm test                      # 49 API integration tests (builds and drops a medshare_api_test database)
 ```
 
 | Script | What it does |
@@ -34,6 +37,10 @@ npm run db:test               # 77 SQL integrity checks + 22 multi-connection co
 | `db:seed` | Loads the synthetic dataset into an empty, migrated database |
 | `db:reset` | Drops the `public` schema, then migrates and seeds |
 | `db:test` | Runs `db/tests/*.sql` (rolled back) and the concurrency suite (throwaway database) |
+| `dev` / `start` | Runs the API (watch mode / plain) |
+| `test` | Vitest + Supertest API integration tests against real PostgreSQL |
+| `prisma:pull` | Re-introspects the SQL-first schema into `prisma/schema.prisma` |
+| `typecheck` | TypeScript, no emit |
 
 ## Environment variables (root `.env`)
 
@@ -42,19 +49,31 @@ npm run db:test               # 77 SQL integrity checks + 22 multi-connection co
 | `POSTGRES_ADMIN_USER`, `POSTGRES_ADMIN_PASSWORD`, `POSTGRES_PORT` | docker compose | Container superuser and host port |
 | `DATABASE_ADMIN_URL` | `scripts/db.ts` only | Superuser connection for migrations, seed and tests |
 | `MEDSHARE_APP_PASSWORD` | `scripts/db.ts` | Sets the password of the least-privilege `medshare_app` role |
-| `DATABASE_URL` | API (Phase 3) | Connection as `medshare_app` |
+| `DATABASE_URL` | API, Prisma | Connection as `medshare_app` |
+| `JWT_SECRET`, `JWT_EXPIRES_IN` | API | Token signing (≥ 32 random characters) and lifetime |
+| `PORT`, `CORS_ORIGIN` | API | Listen port; allowed browser origin(s), comma-separated |
+| `JOBS_ENABLED` | API | Run expiry, shortage, recommendation and analytics jobs daily in-process |
 
 ## Layout
 
 ```
 backend/
 ├── db/
-│   ├── migrations/      000 bootstrap · 001 schema · 002 core · 003 triggers · 004 procedures · 005 views · 006 privileges
+│   ├── migrations/      000 bootstrap · 001 schema · 002 core · 003 triggers · 004 procedures · 005 views · 006 privileges · 007 trigger security
 │   ├── seed/            001 reference data · 002 six months of activity via procedures · 003 jobs + integrity assertion
 │   ├── tests/           001_integrity.sql (self-contained, rolled back)
 │   └── schema.phase1.sql  Phase 1 design snapshot (historical)
+├── src/
+│   ├── app.ts, server.ts, config.ts, jobs.ts
+│   ├── auth/            JWT, bcrypt, DB-backed RBAC + facility scope
+│   ├── db/              pg pool (transactions, retry), Prisma client
+│   ├── http/            errors (DB → HTTP mapping), pagination, audit, helpers
+│   └── modules/         auth · users · organizations/facilities · catalogue/batches · inventory · alerts · redistribution · transfers/stock-requests · analytics/dashboard · admin/audit
+├── tests/               Vitest + Supertest integration tests (dedicated PostgreSQL database)
+├── prisma/              schema.prisma (introspected; Prisma is a typed client, not the schema owner)
 ├── scripts/
 │   ├── db.ts            migrate / seed / reset / test runner
+│   ├── lib/database.ts  reusable migrate / seed / create-database helpers
 │   └── concurrency.ts   multi-connection tests (+ withRetry helper)
 └── docs/
 ```

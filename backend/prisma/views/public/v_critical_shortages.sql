@@ -1,0 +1,20 @@
+SELECT
+  facility_id,
+  facility_code,
+  facility_name,
+  organization_id,
+  medicine_id,
+  medicine_code,
+  medicine_name,
+  usable,
+  min_stock_level,
+  reorder_threshold,
+  safety_stock,
+  daily_rate,
+  demand_basis,
+  days_of_inventory,
+  stock_status
+FROM
+  v_shortage_status
+WHERE
+  (stock_status = 'CRITICAL' :: text);

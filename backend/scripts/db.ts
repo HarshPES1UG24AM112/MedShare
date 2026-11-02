@@ -9,110 +9,19 @@
  *   editing an applied file is detected and refused.
  */
 import { config as loadEnv } from 'dotenv';
-import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
+import type pg from 'pg';
 import { runConcurrencyTests } from './concurrency.js';
+import { connect, DB_DIR, dropSchema, migrate, seed, sqlFiles } from './lib/database.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(here, '../../.env') });
 
-const DB_DIR = resolve(here, '../db');
 const adminUrl = process.env.DATABASE_ADMIN_URL;
 if (!adminUrl) throw new Error('DATABASE_ADMIN_URL is not set (see .env.example)');
-
-// Line endings are normalised so a CRLF checkout doesn't look like an edited migration.
-const sha = (s: string) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex');
-const sqlFiles = (dir: string) =>
-  readdirSync(join(DB_DIR, dir))
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
-
-async function connect() {
-  const client = new pg.Client({ connectionString: adminUrl });
-  client.on('notice', (n) => console.log(`  ${n.message}`));
-  await client.connect();
-  return client;
-}
-
-async function migrate(client: pg.Client) {
-  const files = sqlFiles('migrations');
-  const [bootstrap, ...rest] = files;
-  if (!bootstrap?.startsWith('000_')) throw new Error('migrations must start with 000_bootstrap.sql');
-
-  // Bootstrap is idempotent and always re-run as superuser.
-  await client.query(readFileSync(join(DB_DIR, 'migrations', bootstrap), 'utf8'));
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS public.schema_migrations (
-      filename   text PRIMARY KEY,
-      checksum   text NOT NULL,
-      applied_at timestamptz NOT NULL DEFAULT now()
-    );
-    ALTER TABLE public.schema_migrations OWNER TO medshare_owner;`);
-
-  const applied = new Map<string, string>(
-    (await client.query('SELECT filename, checksum FROM schema_migrations')).rows.map((r) => [r.filename, r.checksum]),
-  );
-
-  for (const file of rest) {
-    const sql = readFileSync(join(DB_DIR, 'migrations', file), 'utf8');
-    const sum = sha(sql);
-    if (applied.has(file)) {
-      if (applied.get(file) !== sum) throw new Error(`${file} was modified after being applied — create a new migration instead`);
-      continue;
-    }
-    process.stdout.write(`→ ${file} … `);
-    await client.query('BEGIN');
-    try {
-      await client.query('SET LOCAL ROLE medshare_owner');
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (filename, checksum) VALUES ($1, $2)', [file, sum]);
-      await client.query('COMMIT');
-      console.log('ok');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      console.log('FAILED');
-      throw e;
-    }
-  }
-
-  const appPassword = process.env.MEDSHARE_APP_PASSWORD;
-  if (appPassword) {
-    // Role passwords can't be bound as parameters; quote via format().
-    const { rows } = await client.query(`SELECT format('ALTER ROLE medshare_app LOGIN PASSWORD %L', $1::text) AS stmt`, [appPassword]);
-    await client.query(rows[0].stmt);
-  }
-  console.log('Migrations up to date.');
-}
-
-async function runFile(client: pg.Client, dir: string, file: string, asOwner: boolean) {
-  const sql = readFileSync(join(DB_DIR, dir, file), 'utf8');
-  console.log(`→ ${dir}/${file}`);
-  await client.query('BEGIN');
-  try {
-    if (asOwner) await client.query('SET LOCAL ROLE medshare_owner');
-    await client.query(sql);
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  }
-}
-
-async function seed(client: pg.Client) {
-  // Seed runs as the superuser session so fn_now() honours medshare.event_time
-  // (back-dated synthetic history); objects stay owned by medshare_owner.
-  for (const f of sqlFiles('seed')) await runFile(client, 'seed', f, false);
-}
-
-async function reset(client: pg.Client) {
-  await client.query(`
-    DROP SCHEMA IF EXISTS public CASCADE;
-    CREATE SCHEMA public;`);
-  console.log('Schema dropped.');
-}
+const appPassword = process.env.MEDSHARE_APP_PASSWORD;
 
 async function test(client: pg.Client) {
   // SQL tests run inside a transaction that the test file itself rolls back,
@@ -145,13 +54,14 @@ async function test(client: pg.Client) {
 }
 
 const cmd = process.argv[2];
-const client = await connect();
+const client = await connect(adminUrl);
 try {
-  if (cmd === 'migrate') await migrate(client);
+  if (cmd === 'migrate') await migrate(client, { appPassword });
   else if (cmd === 'seed') await seed(client);
   else if (cmd === 'reset') {
-    await reset(client);
-    await migrate(client);
+    await dropSchema(client);
+    console.log('Schema dropped.');
+    await migrate(client, { appPassword });
     await seed(client);
   } else if (cmd === 'test') await test(client);
   else {

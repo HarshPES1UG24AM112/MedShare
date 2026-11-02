@@ -174,3 +174,7 @@ Testing and seeding surfaced these improvements over the Phase 1 text. All of th
 ## 8. Next: Phase 3 (backend)
 
 Express + TypeScript API on top of this database: JWT auth (bcrypt), RBAC middleware using `fn_user_has_permission` / `fn_user_facility_ids`, Zod validation, procedure calls with `withRetry()` and `Idempotency-Key`, mapping of the error convention, Prisma (`db pull`) for master-data CRUD, and publication of `API_CONTRACT.md` for the frontend.
+
+### Post-Phase-2 addition (found during Phase 3)
+
+6. **`007_trigger_security.sql`.** The API integration tests showed that triggers fired by `medshare_app` writes (the deferred medicine-composition check, and shortage re-evaluation after a stock-policy update) ran as the invoking role. Their calls to private helper functions were therefore denied, because `EXECUTE` is intentionally not granted to the app role. Every trigger function is now `SECURITY DEFINER` with a pinned `search_path`. A regression test covers both paths.

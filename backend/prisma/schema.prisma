@@ -1,0 +1,960 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["views"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model audit_logs {
+  id            BigInt      @id @default(autoincrement())
+  occurred_at   DateTime    @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  actor_user_id BigInt?
+  action        String
+  entity_type   String
+  entity_id     String?
+  facility_id   Int?
+  old_values    Json?
+  new_values    Json?
+  request_id    String?     @db.Uuid
+  ip_address    String?     @db.Inet
+  users         users?      @relation(fields: [actor_user_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  facilities    facilities? @relation(fields: [facility_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([actor_user_id, occurred_at(sort: Desc)], map: "ix_audit_actor_time")
+  @@index([entity_type, entity_id], map: "ix_audit_entity")
+  @@index([occurred_at], map: "ix_audit_occurred_brin", type: Brin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model engine_config {
+  id                               Boolean  @id @default(true)
+  planning_horizon_days            Int      @default(30)
+  min_remaining_shelf_life_days    Int      @default(14)
+  near_expiry_window_days          Int      @default(60)
+  measured_demand_min_history_days Int      @default(30)
+  large_adjustment_audit_units     Int      @default(500)
+  updated_by                       BigInt?
+  updated_at                       DateTime @default(now()) @db.Timestamptz(6)
+  users                            users?   @relation(fields: [updated_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model expiry_alerts {
+  id                    BigInt       @id @default(autoincrement())
+  inventory_id          BigInt
+  level                 expiry_level
+  status                alert_status @default(OPEN)
+  quantity_at_detection Int
+  detected_at           DateTime     @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  acknowledged_by       BigInt?
+  acknowledged_at       DateTime?    @db.Timestamptz(6)
+  resolved_at           DateTime?    @db.Timestamptz(6)
+  users                 users?       @relation(fields: [acknowledged_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  inventory             inventory    @relation(fields: [inventory_id], references: [id], onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model facilities {
+  id                                                                      Int                              @id @default(autoincrement())
+  organization_id                                                         Int
+  region_id                                                               Int
+  code                                                                    String                           @unique
+  name                                                                    String
+  facility_type                                                           facility_type
+  address_line                                                            String
+  latitude                                                                Decimal                          @db.Decimal(9, 6)
+  longitude                                                               Decimal                          @db.Decimal(9, 6)
+  has_cold_chain                                                          Boolean                          @default(false)
+  max_dispatch_radius_km                                                  Decimal                          @default(100) @db.Decimal(6, 1)
+  contact_phone                                                           String?
+  is_active                                                               Boolean                          @default(true)
+  is_synthetic                                                            Boolean                          @default(true)
+  created_at                                                              DateTime                         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at                                                              DateTime                         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  audit_logs                                                              audit_logs[]
+  organizations                                                           organizations                    @relation(fields: [organization_id], references: [id], onUpdate: NoAction)
+  regions                                                                 regions                          @relation(fields: [region_id], references: [id], onUpdate: NoAction)
+  facility_medicine_settings                                              facility_medicine_settings[]
+  facility_users                                                          facility_users[]
+  inventory                                                               inventory[]
+  redistribution_recommendations                                          redistribution_recommendations[]
+  stock_requests                                                          stock_requests[]
+  transfer_requests_transfer_requests_destination_facility_idTofacilities transfer_requests[]              @relation("transfer_requests_destination_facility_idTofacilities")
+  transfer_requests_transfer_requests_source_facility_idTofacilities      transfer_requests[]              @relation("transfer_requests_source_facility_idTofacilities")
+
+  @@unique([organization_id, name])
+  @@index([organization_id], map: "ix_facilities_org")
+  @@index([region_id], map: "ix_facilities_region")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model facility_medicine_settings {
+  facility_id                 Int
+  medicine_id                 Int
+  min_stock_level             Int
+  reorder_threshold           Int
+  safety_stock                Int
+  estimated_daily_consumption Decimal           @db.Decimal(10, 2)
+  estimate_is_simulated       Boolean           @default(true)
+  updated_by                  BigInt?
+  updated_at                  DateTime          @default(now()) @db.Timestamptz(6)
+  facilities                  facilities        @relation(fields: [facility_id], references: [id], onUpdate: NoAction)
+  medicines                   medicines         @relation(fields: [medicine_id], references: [id], onUpdate: NoAction)
+  users                       users?            @relation(fields: [updated_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  shortage_alerts             shortage_alerts[]
+
+  @@id([facility_id, medicine_id])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model facility_users {
+  user_id                                 BigInt
+  facility_id                             Int
+  role_id                                 Int        @db.SmallInt
+  assigned_by                             BigInt?
+  assigned_at                             DateTime   @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  users_facility_users_assigned_byTousers users?     @relation("facility_users_assigned_byTousers", fields: [assigned_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  facilities                              facilities @relation(fields: [facility_id], references: [id], onUpdate: NoAction)
+  roles                                   roles      @relation(fields: [role_id], references: [id], onUpdate: NoAction)
+  users_facility_users_user_idTousers     users      @relation("facility_users_user_idTousers", fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@id([user_id, facility_id, role_id])
+  @@index([facility_id], map: "ix_facility_users_facility")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model idempotency_keys {
+  user_id       BigInt
+  idem_key      String   @db.Uuid
+  operation     String
+  request_hash  String
+  resource_type String
+  resource_id   String
+  created_at    DateTime @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  users         users    @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@id([user_id, idem_key])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model inventory {
+  id                             BigInt                           @id @default(autoincrement())
+  facility_id                    Int
+  batch_id                       BigInt
+  qty_available                  Int                              @default(0)
+  qty_reserved                   Int                              @default(0)
+  qty_damaged                    Int                              @default(0)
+  updated_at                     DateTime                         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  expiry_alerts                  expiry_alerts[]
+  medicine_batches               medicine_batches                 @relation(fields: [batch_id], references: [id], onUpdate: NoAction)
+  facilities                     facilities                       @relation(fields: [facility_id], references: [id], onUpdate: NoAction)
+  inventory_movements            inventory_movements[]
+  redistribution_recommendations redistribution_recommendations[]
+
+  @@unique([facility_id, batch_id], map: "uq_inventory_facility_batch")
+  @@index([batch_id], map: "ix_inventory_batch")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model inventory_movements {
+  id               BigInt          @id @default(autoincrement())
+  inventory_id     BigInt
+  movement_type    String
+  quantity         Int
+  transfer_item_id BigInt?
+  reason           String?
+  reference        String?
+  performed_by     BigInt
+  created_at       DateTime        @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  inventory        inventory       @relation(fields: [inventory_id], references: [id], onUpdate: NoAction)
+  movement_types   movement_types  @relation(fields: [movement_type], references: [code], onUpdate: NoAction)
+  users            users           @relation(fields: [performed_by], references: [id], onUpdate: NoAction)
+  transfer_items   transfer_items? @relation(fields: [transfer_item_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@index([created_at], map: "ix_movements_created_brin", type: Brin)
+  @@index([inventory_id, created_at(sort: Desc)], map: "ix_movements_inventory_time")
+  @@index([movement_type, created_at, inventory_id, quantity], map: "ix_movements_type_time")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model manufacturers {
+  id               Int                @id @default(autoincrement())
+  name             String             @unique
+  license_number   String             @unique
+  country          String             @default("India")
+  is_synthetic     Boolean            @default(true)
+  medicine_batches medicine_batches[]
+
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "ix_manufacturers_name_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model medicine_batches {
+  id               BigInt           @id @default(autoincrement())
+  medicine_id      Int
+  manufacturer_id  Int
+  batch_number     String
+  manufacture_date DateTime         @db.Date
+  expiry_date      DateTime         @db.Date
+  unit_cost        Decimal          @db.Decimal(12, 2)
+  status           batch_status     @default(ACTIVE)
+  status_reason    String?
+  created_at       DateTime         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at       DateTime         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  inventory        inventory[]
+  manufacturers    manufacturers    @relation(fields: [manufacturer_id], references: [id], onUpdate: NoAction)
+  medicines        medicines        @relation(fields: [medicine_id], references: [id], onUpdate: NoAction)
+  transfer_items   transfer_items[]
+
+  @@unique([manufacturer_id, medicine_id, batch_number], map: "uq_batch_lot")
+  @@index([manufacturer_id], map: "ix_batches_manufacturer")
+  @@index([medicine_id, expiry_date], map: "ix_batches_medicine_expiry")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model medicine_categories {
+  id                        Int                   @id @default(autoincrement())
+  parent_id                 Int?
+  name                      String
+  description               String?
+  medicine_categories       medicine_categories?  @relation("medicine_categoriesTomedicine_categories", fields: [parent_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  other_medicine_categories medicine_categories[] @relation("medicine_categoriesTomedicine_categories")
+  medicines                 medicines[]
+
+  @@unique([parent_id, name])
+  @@index([parent_id], map: "ix_categories_parent")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model medicine_ingredients {
+  medicine_id    Int
+  substance_id   Int
+  strength_value Decimal    @db.Decimal(10, 3)
+  strength_uom   String
+  medicines      medicines  @relation(fields: [medicine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  substances     substances @relation(fields: [substance_id], references: [id], onUpdate: NoAction)
+
+  @@id([medicine_id, substance_id])
+  @@index([substance_id], map: "ix_ingredients_substance")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model medicine_units {
+  id        Int         @id @default(autoincrement()) @db.SmallInt
+  code      String      @unique
+  name      String      @unique
+  medicines medicines[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model medicines {
+  id                         Int                          @id @default(autoincrement())
+  code                       String                       @unique
+  name                       String
+  dosage_form                dosage_form
+  unit_volume_ml             Decimal?                     @db.Decimal(8, 2)
+  category_id                Int
+  dispensing_unit_id         Int                          @db.SmallInt
+  requires_cold_chain        Boolean                      @default(false)
+  is_essential               Boolean                      @default(false)
+  description                String?
+  is_active                  Boolean                      @default(true)
+  created_at                 DateTime                     @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at                 DateTime                     @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  facility_medicine_settings facility_medicine_settings[]
+  medicine_batches           medicine_batches[]
+  medicine_ingredients       medicine_ingredients[]
+  medicine_categories        medicine_categories          @relation(fields: [category_id], references: [id], onUpdate: NoAction)
+  medicine_units             medicine_units               @relation(fields: [dispensing_unit_id], references: [id], onUpdate: NoAction)
+  stock_request_items        stock_request_items[]
+
+  @@index([category_id], map: "ix_medicines_category")
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "ix_medicines_name_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model movement_types {
+  code                   String                @id
+  effect_available       Int                   @db.SmallInt
+  effect_reserved        Int                   @db.SmallInt
+  effect_damaged         Int                   @db.SmallInt
+  requires_transfer_item Boolean
+  requires_reason        Boolean
+  description            String
+  inventory_movements    inventory_movements[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model notifications {
+  id                BigInt    @id @default(autoincrement())
+  recipient_user_id BigInt
+  category          String
+  title             String
+  body              String
+  entity_type       String?
+  entity_id         String?
+  created_at        DateTime  @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  read_at           DateTime? @db.Timestamptz(6)
+  users             users     @relation(fields: [recipient_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This table contains exclusion constraints and requires additional setup for migrations. Visit https://pris.ly/d/exclusion-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model organization_agreements {
+  id                                                                     Int           @id @default(autoincrement())
+  organization_a_id                                                      Int
+  organization_b_id                                                      Int
+  valid_from                                                             DateTime      @db.Date
+  valid_to                                                               DateTime?     @db.Date
+  created_by                                                             BigInt
+  created_at                                                             DateTime      @default(now()) @db.Timestamptz(6)
+  users                                                                  users         @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+  organizations_organization_agreements_organization_a_idToorganizations organizations @relation("organization_agreements_organization_a_idToorganizations", fields: [organization_a_id], references: [id], onUpdate: NoAction)
+  organizations_organization_agreements_organization_b_idToorganizations organizations @relation("organization_agreements_organization_b_idToorganizations", fields: [organization_b_id], references: [id], onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model organizations {
+  id                                                                               Int                       @id @default(autoincrement())
+  name                                                                             String                    @unique
+  org_type                                                                         organization_type
+  registration_number                                                              String                    @unique
+  contact_email                                                                    String?                   @db.Citext
+  is_active                                                                        Boolean                   @default(true)
+  is_synthetic                                                                     Boolean                   @default(true)
+  created_at                                                                       DateTime                  @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at                                                                       DateTime                  @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  facilities                                                                       facilities[]
+  organization_agreements_organization_agreements_organization_a_idToorganizations organization_agreements[] @relation("organization_agreements_organization_a_idToorganizations")
+  organization_agreements_organization_agreements_organization_b_idToorganizations organization_agreements[] @relation("organization_agreements_organization_b_idToorganizations")
+  user_roles                                                                       user_roles[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model permissions {
+  code             String             @id
+  description      String
+  role_permissions role_permissions[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model redistribution_recommendations {
+  id                           BigInt                @id @default(autoincrement())
+  generated_at                 DateTime              @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  reason_code                  recommendation_reason
+  source_inventory_id          BigInt
+  destination_facility_id      Int
+  recommended_quantity         Int
+  projected_shortage_reduction Int
+  priority_score               Decimal               @db.Decimal(5, 2)
+  explanation                  String
+  status                       recommendation_status @default(OPEN)
+  status_changed_by            BigInt?
+  status_changed_at            DateTime?             @db.Timestamptz(6)
+  facilities                   facilities            @relation(fields: [destination_facility_id], references: [id], onUpdate: NoAction)
+  inventory                    inventory             @relation(fields: [source_inventory_id], references: [id], onUpdate: NoAction)
+  users                        users?                @relation(fields: [status_changed_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  transfer_requests            transfer_requests?
+
+  @@index([destination_facility_id], map: "ix_reco_destination")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model regions {
+  id            Int          @id @default(autoincrement())
+  parent_id     Int?
+  code          String       @unique
+  name          String
+  facilities    facilities[]
+  regions       regions?     @relation("regionsToregions", fields: [parent_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  other_regions regions[]    @relation("regionsToregions")
+
+  @@unique([parent_id, name])
+  @@index([parent_id], map: "ix_regions_parent")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model role_permissions {
+  role_id         Int         @db.SmallInt
+  permission_code String
+  permissions     permissions @relation(fields: [permission_code], references: [code], onDelete: Cascade, onUpdate: NoAction)
+  roles           roles       @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([role_id, permission_code])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model roles {
+  id               Int                @id @default(autoincrement()) @db.SmallInt
+  code             String             @unique
+  name             String             @unique
+  grant_level      role_grant_level
+  description      String?
+  facility_users   facility_users[]
+  role_permissions role_permissions[]
+  user_roles       user_roles[]
+}
+
+model schema_migrations {
+  filename   String   @id
+  checksum   String
+  applied_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model shortage_alerts {
+  id                         BigInt                     @id @default(autoincrement())
+  facility_id                Int
+  medicine_id                Int
+  severity                   shortage_severity
+  status                     alert_status               @default(OPEN)
+  stock_at_detection         Int
+  threshold_at_detection     Int
+  detected_at                DateTime                   @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  acknowledged_by            BigInt?
+  acknowledged_at            DateTime?                  @db.Timestamptz(6)
+  resolved_at                DateTime?                  @db.Timestamptz(6)
+  users                      users?                     @relation(fields: [acknowledged_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  facility_medicine_settings facility_medicine_settings @relation(fields: [facility_id, medicine_id], references: [facility_id, medicine_id], onUpdate: NoAction)
+
+  @@index([medicine_id], map: "ix_shortage_alerts_medicine")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model stock_request_fulfilments {
+  transfer_item_id      BigInt              @id
+  stock_request_item_id BigInt
+  stock_request_items   stock_request_items @relation(fields: [stock_request_item_id], references: [id], onUpdate: NoAction)
+  transfer_items        transfer_items      @relation(fields: [transfer_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([stock_request_item_id], map: "ix_fulfilments_request_item")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model stock_request_items {
+  id                        BigInt                      @id @default(autoincrement())
+  stock_request_id          BigInt
+  medicine_id               Int
+  quantity_requested        Int
+  stock_request_fulfilments stock_request_fulfilments[]
+  medicines                 medicines                   @relation(fields: [medicine_id], references: [id], onUpdate: NoAction)
+  stock_requests            stock_requests              @relation(fields: [stock_request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([stock_request_id, medicine_id])
+  @@index([medicine_id], map: "ix_stock_request_items_med")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model stock_requests {
+  id                     BigInt                @id @default(autoincrement())
+  code                   String                @unique
+  requesting_facility_id Int
+  requested_by           BigInt
+  priority               request_priority      @default(ROUTINE)
+  status                 stock_request_status  @default(OPEN)
+  needed_by              DateTime?             @db.Date
+  notes                  String?
+  created_at             DateTime              @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at             DateTime              @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  closed_at              DateTime?             @db.Timestamptz(6)
+  stock_request_items    stock_request_items[]
+  users                  users                 @relation(fields: [requested_by], references: [id], onUpdate: NoAction)
+  facilities             facilities            @relation(fields: [requesting_facility_id], references: [id], onUpdate: NoAction)
+
+  @@index([requesting_facility_id, status], map: "ix_stock_requests_facility")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model substances {
+  id                   Int                    @id @default(autoincrement())
+  name                 String                 @unique
+  medicine_ingredients medicine_ingredients[]
+
+  @@index([name(ops: raw("gin_trgm_ops"))], map: "ix_substances_name_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model transfer_approvals {
+  id                BigInt            @id @default(autoincrement())
+  transfer_id       BigInt
+  stage             approval_stage
+  decision          approval_decision
+  decided_by        BigInt
+  comment           String?
+  decided_at        DateTime          @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  users             users             @relation(fields: [decided_by], references: [id], onUpdate: NoAction)
+  transfer_requests transfer_requests @relation(fields: [transfer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([transfer_id, stage], map: "uq_approval_stage")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model transfer_items {
+  id                          BigInt                     @id @default(autoincrement())
+  transfer_id                 BigInt
+  batch_id                    BigInt
+  quantity                    Int
+  quantity_received           Int?
+  quantity_damaged_in_transit Int?
+  inventory_movements         inventory_movements[]
+  stock_request_fulfilments   stock_request_fulfilments?
+  medicine_batches            medicine_batches           @relation(fields: [batch_id], references: [id], onUpdate: NoAction)
+  transfer_requests           transfer_requests          @relation(fields: [transfer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([transfer_id, batch_id], map: "uq_transfer_item_batch")
+  @@index([batch_id], map: "ix_transfer_items_batch")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model transfer_requests {
+  id                                                               BigInt                          @id @default(autoincrement())
+  code                                                             String                          @unique
+  source_facility_id                                               Int
+  destination_facility_id                                          Int
+  recommendation_id                                                BigInt?                         @unique
+  status                                                           transfer_status                 @default(PENDING)
+  requested_by                                                     BigInt
+  request_notes                                                    String?
+  rejection_reason                                                 String?
+  created_at                                                       DateTime                        @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at                                                       DateTime                        @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  transfer_approvals                                               transfer_approvals[]
+  transfer_items                                                   transfer_items[]
+  facilities_transfer_requests_destination_facility_idTofacilities facilities                      @relation("transfer_requests_destination_facility_idTofacilities", fields: [destination_facility_id], references: [id], onUpdate: NoAction)
+  redistribution_recommendations                                   redistribution_recommendations? @relation(fields: [recommendation_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  users                                                            users                           @relation(fields: [requested_by], references: [id], onUpdate: NoAction)
+  facilities_transfer_requests_source_facility_idTofacilities      facilities                      @relation("transfer_requests_source_facility_idTofacilities", fields: [source_facility_id], references: [id], onUpdate: NoAction)
+  transfer_status_history                                          transfer_status_history[]
+
+  @@index([destination_facility_id, status], map: "ix_transfers_dest_status")
+  @@index([source_facility_id, status], map: "ix_transfers_source_status")
+  @@index([status, created_at(sort: Desc)], map: "ix_transfers_status_created")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model transfer_status_history {
+  id                BigInt            @id @default(autoincrement())
+  transfer_id       BigInt
+  to_status         transfer_status
+  changed_by        BigInt
+  note              String?
+  changed_at        DateTime          @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  users             users             @relation(fields: [changed_by], references: [id], onUpdate: NoAction)
+  transfer_requests transfer_requests @relation(fields: [transfer_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([transfer_id, changed_at], map: "ix_transfer_history_transfer")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model user_roles {
+  id                                 BigInt         @id @default(autoincrement())
+  user_id                            BigInt
+  role_id                            Int            @db.SmallInt
+  organization_id                    Int?
+  granted_by                         BigInt?
+  granted_at                         DateTime       @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  users_user_roles_granted_byTousers users?         @relation("user_roles_granted_byTousers", fields: [granted_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  organizations                      organizations? @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  roles                              roles          @relation(fields: [role_id], references: [id], onUpdate: NoAction)
+  users_user_roles_user_idTousers    users          @relation("user_roles_user_idTousers", fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@unique([user_id, role_id, organization_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model users {
+  id                                               BigInt                           @id @default(autoincrement())
+  email                                            String                           @unique @db.Citext
+  password_hash                                    String
+  full_name                                        String
+  is_active                                        Boolean                          @default(true)
+  is_synthetic                                     Boolean                          @default(false)
+  last_login_at                                    DateTime?                        @db.Timestamptz(6)
+  created_at                                       DateTime                         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  updated_at                                       DateTime                         @default(dbgenerated("fn_now()")) @db.Timestamptz(6)
+  audit_logs                                       audit_logs[]
+  engine_config                                    engine_config[]
+  expiry_alerts                                    expiry_alerts[]
+  facility_medicine_settings                       facility_medicine_settings[]
+  facility_users_facility_users_assigned_byTousers facility_users[]                 @relation("facility_users_assigned_byTousers")
+  facility_users_facility_users_user_idTousers     facility_users[]                 @relation("facility_users_user_idTousers")
+  idempotency_keys                                 idempotency_keys[]
+  inventory_movements                              inventory_movements[]
+  notifications                                    notifications[]
+  organization_agreements                          organization_agreements[]
+  redistribution_recommendations                   redistribution_recommendations[]
+  shortage_alerts                                  shortage_alerts[]
+  stock_requests                                   stock_requests[]
+  transfer_approvals                               transfer_approvals[]
+  transfer_requests                                transfer_requests[]
+  transfer_status_history                          transfer_status_history[]
+  user_roles_user_roles_granted_byTousers          user_roles[]                     @relation("user_roles_granted_byTousers")
+  user_roles_user_roles_user_idTousers             user_roles[]                     @relation("user_roles_user_idTousers")
+}
+
+view v_region_tree {
+  id        Int?
+  parent_id Int?
+  code      String?
+  name      String?
+  depth     Int?
+  level     String?
+  path      String?
+  state_id  Int?
+}
+
+view v_category_tree {
+  id        Int?
+  parent_id Int?
+  name      String?
+  depth     Int?
+  path      String?
+  root_id   Int?
+}
+
+view v_medicine_catalogue {
+  id                  Int?
+  code                String?
+  name                String?
+  strength_label      String?
+  display_name        String?
+  dosage_form         dosage_form?
+  unit_volume_ml      Decimal?     @db.Decimal(8, 2)
+  unit                String?
+  category_id         Int?
+  category_path       String?
+  category            String?
+  requires_cold_chain Boolean?
+  is_essential        Boolean?
+  is_active           Boolean?
+  description         String?
+  substances          String?
+  created_at          DateTime?    @db.Timestamptz(6)
+  updated_at          DateTime?    @db.Timestamptz(6)
+}
+
+view v_inventory_detail {
+  inventory_id     BigInt?
+  facility_id      Int?
+  facility_code    String?
+  facility_name    String?
+  organization_id  Int?
+  batch_id         BigInt?
+  batch_number     String?
+  medicine_id      Int?
+  medicine_code    String?
+  medicine_name    String?
+  manufacturer     String?
+  manufacture_date DateTime?     @db.Date
+  expiry_date      DateTime?     @db.Date
+  unit_cost        Decimal?      @db.Decimal(12, 2)
+  batch_status     batch_status?
+  qty_available    Int?
+  qty_reserved     Int?
+  qty_damaged      Int?
+  updated_at       DateTime?     @db.Timestamptz(6)
+  days_to_expiry   Int?
+  expiry_bucket    String?
+  is_usable        Boolean?
+  available_value  Decimal?      @db.Decimal
+}
+
+view v_facility_stock {
+  facility_id           Int?
+  medicine_id           Int?
+  usable                BigInt?
+  reserved              BigInt?
+  damaged               BigInt?
+  expired_on_hand       BigInt?
+  blocked_on_hand       BigInt?
+  batches_on_hand       BigInt?
+  nearest_usable_expiry DateTime? @db.Date
+}
+
+view v_demand {
+  facility_id                 Int?
+  medicine_id                 Int?
+  estimated_daily_consumption Decimal?  @db.Decimal(10, 2)
+  estimate_is_simulated       Boolean?
+  first_dispense_date         DateTime? @db.Date
+  units_in_window             BigInt?
+  window_days                 Int?
+  measured_daily_consumption  Decimal?  @db.Decimal
+  possibly_censored           Boolean?
+  daily_rate                  Decimal?  @db.Decimal
+  demand_basis                String?
+}
+
+view v_shortage_status {
+  facility_id       Int?
+  facility_code     String?
+  facility_name     String?
+  organization_id   Int?
+  medicine_id       Int?
+  medicine_code     String?
+  medicine_name     String?
+  usable            BigInt?
+  min_stock_level   Int?
+  reorder_threshold Int?
+  safety_stock      Int?
+  daily_rate        Decimal? @db.Decimal
+  demand_basis      String?
+  days_of_inventory Decimal? @db.Decimal
+  stock_status      String?
+}
+
+view v_critical_shortages {
+  facility_id       Int?
+  facility_code     String?
+  facility_name     String?
+  organization_id   Int?
+  medicine_id       Int?
+  medicine_code     String?
+  medicine_name     String?
+  usable            BigInt?
+  min_stock_level   Int?
+  reorder_threshold Int?
+  safety_stock      Int?
+  daily_rate        Decimal? @db.Decimal
+  demand_basis      String?
+  days_of_inventory Decimal? @db.Decimal
+  stock_status      String?
+}
+
+view v_expiring_inventory {
+  inventory_id     BigInt?
+  facility_id      Int?
+  facility_code    String?
+  facility_name    String?
+  organization_id  Int?
+  batch_id         BigInt?
+  batch_number     String?
+  medicine_id      Int?
+  medicine_code    String?
+  medicine_name    String?
+  manufacturer     String?
+  manufacture_date DateTime?     @db.Date
+  expiry_date      DateTime?     @db.Date
+  unit_cost        Decimal?      @db.Decimal(12, 2)
+  batch_status     batch_status?
+  qty_available    Int?
+  qty_reserved     Int?
+  qty_damaged      Int?
+  updated_at       DateTime?     @db.Timestamptz(6)
+  days_to_expiry   Int?
+  expiry_bucket    String?
+  is_usable        Boolean?
+  available_value  Decimal?      @db.Decimal
+}
+
+view v_facility_inventory_summary {
+  facility_id          Int?
+  code                 String?
+  name                 String?
+  facility_type        facility_type?
+  organization_id      Int?
+  organization_name    String?
+  region_path          String?
+  usable_units         BigInt?
+  reserved_units       BigInt?
+  damaged_units        BigInt?
+  usable_value         Decimal?       @db.Decimal
+  medicines_in_stock   BigInt?
+  batches_on_hand      BigInt?
+  expired_batches      BigInt?
+  expiring_30d_batches BigInt?
+  critical_shortages   BigInt?
+  low_stock            BigInt?
+}
+
+view v_medicine_availability {
+  medicine_id        Int?
+  code               String?
+  name               String?
+  strength_label     String?
+  network_usable     Decimal?  @db.Decimal
+  facilities_holding BigInt?
+  nearest_expiry     DateTime? @db.Date
+  facilities_short   BigInt?
+}
+
+view v_pending_transfers {
+  id                      BigInt?
+  code                    String?
+  status                  transfer_status?
+  source_facility_id      Int?
+  source_name             String?
+  destination_facility_id Int?
+  destination_name        String?
+  cross_organization      Boolean?
+  requested_by            BigInt?
+  requested_by_name       String?
+  created_at              DateTime?                @db.Timestamptz(6)
+  age                     Unsupported("interval")?
+  item_count              BigInt?
+  total_units             BigInt?
+  missing_stages          approval_stage[]
+}
+
+view v_transfer_timeline {
+  transfer_id     BigInt?
+  code            String?
+  event_id        BigInt?
+  from_status     transfer_status?
+  to_status       transfer_status?
+  changed_by      BigInt?
+  changed_by_name String?
+  note            String?
+  changed_at      DateTime?                @db.Timestamptz(6)
+  time_in_state   Unsupported("interval")?
+  step            BigInt?
+}
+
+view v_org_inventory_analytics {
+  organization_id          Int?
+  name                     String?
+  org_type                 organization_type?
+  facilities               BigInt?
+  usable_units             Decimal?           @db.Decimal
+  usable_value             Decimal?           @db.Decimal
+  critical_shortages       Decimal?           @db.Decimal
+  expiring_30d_batches     Decimal?           @db.Decimal
+  wastage_value_estimate   Decimal?           @db.Decimal
+  transfer_completion_rate Decimal?           @db.Decimal
+}
+
+enum alert_status {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum approval_decision {
+  APPROVED
+  REJECTED
+}
+
+enum approval_stage {
+  SOURCE_FACILITY
+  SOURCE_ORGANIZATION
+}
+
+enum batch_status {
+  ACTIVE
+  QUARANTINED
+  RECALLED
+}
+
+enum dosage_form {
+  TABLET
+  CAPSULE
+  SYRUP
+  SUSPENSION
+  INJECTION
+  INFUSION
+  INHALER
+  SACHET
+  CREAM
+  DROPS
+}
+
+enum expiry_level {
+  EXPIRED
+  WITHIN_7_DAYS
+  WITHIN_30_DAYS
+  WITHIN_60_DAYS
+}
+
+enum facility_type {
+  HOSPITAL
+  COMMUNITY_HEALTH_CENTRE
+  PRIMARY_HEALTH_CENTRE
+  PHARMACY
+  WAREHOUSE
+}
+
+enum organization_type {
+  HOSPITAL_NETWORK
+  PHARMACY_CHAIN
+  PUBLIC_HEALTH_AUTHORITY
+  MEDICAL_WAREHOUSE
+  NGO
+}
+
+enum recommendation_reason {
+  SHORTAGE_COVER
+  NEAR_EXPIRY_SURPLUS
+}
+
+enum recommendation_status {
+  OPEN
+  ACCEPTED
+  DISMISSED
+  SUPERSEDED
+}
+
+enum request_priority {
+  ROUTINE
+  URGENT
+  EMERGENCY
+}
+
+enum role_grant_level {
+  PLATFORM
+  ORGANIZATION
+  PLATFORM_OR_ORGANIZATION
+  FACILITY
+}
+
+enum shortage_severity {
+  CRITICAL
+  LOW
+}
+
+enum stock_request_status {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum transfer_status {
+  PENDING
+  APPROVED
+  DISPATCHED
+  RECEIVED
+  REJECTED
+  CANCELLED
+}
