@@ -141,6 +141,25 @@ describe('transfer workflow over HTTP', () => {
     expect(afterOrg.body.status).toBe('APPROVED');
   });
 
+  it('sourcing options list only eligible partner batches for a destination the caller may request for', async () => {
+    const { batchId } = await receiveBatch('FAC-001', 90);
+    await receiveBatch('FAC-001', 40, { expiryDays: 5 }); // too close to expiry: must not be offered
+    const api = await as(users.im('FAC-002'));
+    const med = (await api.get('/medicines?search=MED-0001')).body.data[0].id;
+    const res = await api.get(`/medicines/${med}/sources?destinationFacilityId=${await facility('FAC-002')}`);
+    expect(res.status).toBe(200);
+    expect(res.body.some((s: { batchId: number }) => s.batchId === batchId)).toBe(true);
+    for (const s of res.body) {
+      expect(s.facility.code).not.toBe('FAC-002');
+      expect(s.daysToExpiry).toBeGreaterThanOrEqual(14);
+      expect(s.qtyAvailable).toBeGreaterThan(0);
+    }
+    const sorted = [...res.body].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+    expect(res.body.map((s: { batchId: number }) => s.batchId)).toEqual(sorted.map((s) => s.batchId)); // FEFO
+    // Cannot query sourcing for a destination outside your own facilities.
+    expect((await api.get(`/medicines/${med}/sources?destinationFacilityId=${await facility('FAC-007')}`)).status).toBe(403);
+  });
+
   it('lists transfers scoped to the caller with direction filtering', async () => {
     const api = await as(users.im('FAC-002'));
     const incoming = await api.get(`/transfers?facilityId=${await facility('FAC-002')}&direction=incoming&pageSize=100`);

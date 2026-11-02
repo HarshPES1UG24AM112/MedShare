@@ -166,6 +166,46 @@ async function medicineDetail(medicineId: number, scope: number[] | null) {
   return { ...m, ingredients, manufacturers, stockByFacility };
 }
 
+/**
+ * Sourcing options for a transfer INTO a facility the caller may request for.
+ * Returns only transfer-eligible batches (ACTIVE, enough shelf life, stock
+ * available) at authorised partner facilities within dispatch range, FEFO
+ * first. This is the narrow, purpose-bound exception to batch-level visibility
+ * (design §8.11): partner batches are visible only for a transfer involving
+ * the caller's own facility.
+ */
+router.get(
+  '/medicines/:id/sources',
+  handler(async (req, res) => {
+    const medicineId = idParam(req);
+    const { destinationFacilityId } = z.object({ destinationFacilityId: id }).parse(req.query);
+    await requirePermission(req, 'transfer:request', destinationFacilityId);
+    res.json(
+      await query(
+        `SELECT i.id AS inventory_id, b.id AS batch_id, b.batch_number, b.expiry_date, (b.expiry_date - fn_today()) AS days_to_expiry,
+                i.qty_available, json_build_object('id', f.id, 'code', f.code, 'name', f.name) AS facility,
+                fn_distance_km(f.id, d.id) AS distance_km, (f.organization_id <> d.organization_id) AS cross_organization,
+                ss.stock_status AS source_stock_status
+         FROM inventory i
+         JOIN medicine_batches b ON b.id = i.batch_id
+         JOIN medicines m ON m.id = b.medicine_id
+         JOIN facilities f ON f.id = i.facility_id
+         JOIN facilities d ON d.id = $2
+         CROSS JOIN engine_config e
+         LEFT JOIN v_shortage_status ss ON ss.facility_id = f.id AND ss.medicine_id = m.id
+         WHERE b.medicine_id = $1 AND f.id <> d.id AND f.is_active AND i.qty_available > 0
+           AND b.status = 'ACTIVE' AND b.expiry_date >= fn_today() + e.min_remaining_shelf_life_days
+           AND fn_is_transfer_authorised(f.id, d.id)
+           AND fn_distance_km(f.id, d.id) <= f.max_dispatch_radius_km
+           AND (NOT m.requires_cold_chain OR (f.has_cold_chain AND d.has_cold_chain))
+         ORDER BY b.expiry_date, distance_km
+         LIMIT 50`,
+        [medicineId, destinationFacilityId],
+      ),
+    );
+  }),
+);
+
 router.get(
   '/medicines/:id',
   handler(async (req, res) => {
