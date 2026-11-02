@@ -17,7 +17,8 @@
     "test": "vitest run",
     "postinstall": "prisma generate",
     "perf:build": "tsx scripts/perf.ts build",
-    "perf:explain": "tsx scripts/perf.ts explain"
+    "perf:explain": "tsx scripts/perf.ts explain",
+    "db:queries": "tsx scripts/queries.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

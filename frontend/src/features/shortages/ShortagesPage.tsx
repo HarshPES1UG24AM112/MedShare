@@ -70,8 +70,9 @@ export default function ShortagesPage() {
       sortKey: 'facility',
       hideOnMobile: true,
       cell: (s) => (
-        <span className="text-ink-700" title={s.facilityName}>
-          {s.facilityCode} <span className="text-xs text-ink-500">{s.facilityName}</span>
+        <span className="block text-ink-700" title={s.facilityName}>
+          {s.facilityCode}
+          <span className="block max-w-40 truncate text-xs text-ink-500">{s.facilityName}</span>
         </span>
       ),
     },
