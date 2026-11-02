@@ -140,8 +140,15 @@ router.get(
         AND ($3::transfer_status IS NULL OR x.status = $3)
         AND ($4::text IS NULL OR x.code ILIKE '%' || $4 || '%' OR x.medicines ILIKE '%' || $4 || '%'
              OR x.source_facility->>'name' ILIKE '%' || $4 || '%' OR x.destination_facility->>'name' ILIKE '%' || $4 || '%')
+        -- "Needs my action" = the approve/dispatch/receive rules of allowedActions (transferDetail):
+        -- requesters never approve their own transfer, a stage is offered only while undecided,
+        -- and organisation admins see cross-organisation transfers awaiting their stage.
         AND ($5::text IS NULL OR (
-             (x.status = 'PENDING' AND fn_user_has_permission($6, (x.source_facility->>'id')::int, 'transfer:approve'))
+             (x.status = 'PENDING' AND $6 <> (x.requested_by->>'id')::bigint AND (
+                  (fn_user_has_permission($6, (x.source_facility->>'id')::int, 'transfer:approve')
+                   AND NOT EXISTS (SELECT 1 FROM transfer_approvals a WHERE a.transfer_id = x.id AND a.stage = 'SOURCE_FACILITY'))
+               OR (x.cross_organization AND fn_user_has_permission($6, (x.source_facility->>'id')::int, 'transfer:approve_org')
+                   AND NOT EXISTS (SELECT 1 FROM transfer_approvals a WHERE a.transfer_id = x.id AND a.stage = 'SOURCE_ORGANIZATION'))))
           OR (x.status = 'APPROVED' AND fn_user_has_permission($6, (x.source_facility->>'id')::int, 'transfer:dispatch'))
           OR (x.status = 'DISPATCHED' AND fn_user_has_permission($6, (x.destination_facility->>'id')::int, 'transfer:receive'))))`;
     res.json(

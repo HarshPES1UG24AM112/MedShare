@@ -2,7 +2,7 @@
 
 **Owner:** backend (Agent 1). **Consumer:** frontend (Agent 2).
 **Base URL:** `/api/v1` (the dev server runs at `http://localhost:4000/api/v1`; the Vite dev proxy forwards `/api`).
-**Status:** implemented and covered by 49 integration tests against PostgreSQL (`backend/tests`).
+**Status:** implemented and covered by 55 integration tests against PostgreSQL (`backend/tests`). Changes since approval are listed in §4.
 
 > MedShare is a simulated platform. Seeded data is synthetic, and analytics responses say so in `meta.synthetic`.
 
@@ -145,7 +145,7 @@ Inventory row: `{ inventoryId, facilityId, facilityCode, facilityName, organizat
 | GET | `/alerts/shortages` *paged* | filters: `facilityId`, `severity` (CRITICAL/LOW), `medicineId`; rows: `currentStock, minStockLevel, reorderThreshold, avgDailyConsumption, demandBasis, possiblyCensored, daysRemaining, deficit, coverage, alertId, alertStatus`; sort: `daysRemaining`, `coverage`, `deficit`, `medicine`, `facility`, `currentStock` |
 | GET | `/alerts/expiry` *paged* | `window=expired|7|30|60` (default 30), `facilityId`; inventory rows + `valueAtRisk`, `alertId` |
 | GET | `/alerts/expiry/summary` | `{ expired, within7, within30, within60, unitsAtRisk, valueAtRisk, expiredValue }` |
-| POST | `/alerts/shortages/:alertId/acknowledge`, `/alerts/expiry/:alertId/acknowledge` | scope-checked; OPEN → ACKNOWLEDGED |
+| POST | `/alerts/shortages/:alertId/acknowledge`, `/alerts/expiry/:alertId/acknowledge` | scope-checked and needs `inventory:write` at the alert's facility; OPEN → ACKNOWLEDGED |
 | GET | `/notifications` *paged* | `unreadOnly`; also returns `unreadCount` |
 | POST | `/notifications/:id/read`, `/notifications/read-all` | 204 |
 
@@ -164,7 +164,7 @@ Recommendation: `{ id, generatedAt, reasonCode: SHORTAGE_COVER|NEAR_EXPIRY_SURPL
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/transfers` *paged* | filters: `status`, `facilityId`, `direction=incoming|outgoing` (relative to `facilityId`), `actionable=true` (only transfers waiting on the caller); sort: `createdAt`, `updatedAt`, `code`, `status`, `totalUnits` |
+| GET | `/transfers` *paged* | filters: `status`, `facilityId`, `direction=incoming|outgoing` (relative to `facilityId`), `actionable=true` (only transfers waiting on the caller: a stage they may still approve, excluding their own requests, or dispatch / receive); sort: `createdAt`, `updatedAt`, `code`, `status`, `totalUnits` |
 | GET | `/transfers/:id` | `TransferDetail` |
 | POST | `/transfers` | `{ sourceFacilityId, destinationFacilityId, items: [{ batchId, quantity, stockRequestItemId? }], notes? }` → 201. **Does not reserve stock.** |
 | POST | `/transfers/:id/approve` | `{ stage?: SOURCE_FACILITY|SOURCE_ORGANIZATION, comment? }`. When every required stage is approved, stock is **reserved atomically**; an `INSUFFICIENT_STOCK` failure leaves the transfer PENDING. |
@@ -234,3 +234,16 @@ A request closes automatically when every line has been fully received through l
 | Expiry params | `window=expired|7|30|60` | same |
 | Shortages | `severity`, `daysRemaining` | same, plus `demandBasis`, `possiblyCensored`, `coverage`, `alertId` |
 | Analytics | flat sections | superset (adds region rollup, recurring shortages, wastage, timing) |
+
+---
+
+## 4. Changes after approval (Phase 5)
+
+All changes are backwards compatible for well-behaved clients; no path, field or shape changed.
+
+| Endpoint | Change | Reason |
+|---|---|---|
+| `POST /inventory/:id/{dispense,damage,dispose,write-off,adjust}` | `Idempotency-Key` is now honoured (it was accepted but ignored). Same key + same body replays without a second movement; same key + different body → 422 `IDEMPOTENCY_KEY_REUSED`. | §1 already promised idempotency for every stock write. Migration `008_idempotent_stock_actions.sql`. |
+| `POST /alerts/*/:alertId/acknowledge` | Also requires `inventory:write` at the alert's facility (403 otherwise). | Acknowledging changes shared state; read-only auditors could do it. |
+| `GET /transfers?actionable=true` | Excludes the caller's own PENDING requests and stages already decided; includes cross-organisation transfers awaiting the caller's organisation stage. | It now matches `allowedActions` exactly. |
+| `GET /medicines/:id/sources` | Same rows and order; evaluated per partner facility. | 591 → 43 ms on the scaled dataset (`backend/docs/perf/EXPLAIN_RESULTS.md`). |

@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { authenticate, currentUser, facilityScope } from '../auth/auth.js';
+import { authenticate, currentUser, facilityScope, requirePermission } from '../auth/auth.js';
 import { query, queryOne } from '../db/pool.js';
 import { audit } from '../http/audit.js';
 import { ApiError, notFound } from '../http/errors.js';
@@ -102,6 +102,8 @@ async function acknowledge(req: Request, table: 'shortage_alerts' | 'expiry_aler
   const alert = await queryOne<{ facilityId: number; status: string }>(facilitySql, [alertId]);
   if (!alert) throw notFound('Alert');
   facilityScope(req, alert.facilityId);
+  // Acknowledging changes shared state, so read-only roles (auditors) may not do it.
+  await requirePermission(req, 'inventory:write', alert.facilityId);
   if (alert.status !== 'OPEN') throw new ApiError(409, 'INVALID_STATE', `Alert is already ${alert.status.toLowerCase()}`);
   await query(`UPDATE ${table} SET status = 'ACKNOWLEDGED', acknowledged_by = $2, acknowledged_at = fn_now() WHERE id = $1`, [alertId, currentUser(req).id]);
   await audit(req, 'ALERT_ACKNOWLEDGED', table === 'shortage_alerts' ? 'SHORTAGE_ALERT' : 'EXPIRY_ALERT', alertId, alert.facilityId);

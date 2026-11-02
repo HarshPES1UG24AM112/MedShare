@@ -31,7 +31,7 @@ export async function connect(url: string, quiet = false) {
   return client;
 }
 
-export async function migrate(client: pg.Client, opts: { appPassword?: string; quiet?: boolean } = {}) {
+export async function migrate(client: pg.Client, opts: { appPassword?: string; quiet?: boolean; until?: string } = {}) {
   const log = (s: string) => !opts.quiet && process.stdout.write(s);
   const [bootstrap, ...rest] = sqlFiles('migrations');
   if (!bootstrap?.startsWith('000_')) throw new Error('migrations must start with 000_bootstrap.sql');
@@ -50,7 +50,8 @@ export async function migrate(client: pg.Client, opts: { appPassword?: string; q
     (await client.query('SELECT filename, checksum FROM schema_migrations')).rows.map((r) => [r.filename, r.checksum]),
   );
 
-  for (const file of rest) {
+  // `until` (a migration prefix such as '008') stops after that migration; used to build baselines.
+  for (const file of rest.filter((f) => !opts.until || f.slice(0, 3) <= opts.until)) {
     const sql = readFileSync(join(DB_DIR, 'migrations', file), 'utf8');
     const sum = sha(sql);
     if (applied.has(file)) {

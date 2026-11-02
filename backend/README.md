@@ -8,8 +8,9 @@ PostgreSQL-first backend for **MedShare**, a simulated medicine-inventory coordi
 |---|---|---|
 | 1 — Requirements & database design | ✅ approved | [docs/PHASE1_DATABASE_DESIGN.md](docs/PHASE1_DATABASE_DESIGN.md) |
 | 2 — Database implementation | ✅ complete (99 tests passing) | [docs/PHASE2_IMPLEMENTATION.md](docs/PHASE2_IMPLEMENTATION.md) |
-| 3 — Express API | ✅ complete (49 API tests passing) | [../API_CONTRACT.md](../API_CONTRACT.md) |
-| 4 — Frontend integration | next | — |
+| 3 — Express API | ✅ complete | [../API_CONTRACT.md](../API_CONTRACT.md) |
+| 4 — Frontend integration | ✅ complete (verified in a browser against the API) | [../frontend/docs/API_INTEGRATION.md](../frontend/docs/API_INTEGRATION.md) |
+| 5 — Testing & optimisation | ✅ complete (55 API tests, 99 DB checks, EXPLAIN study) | [docs/PHASE5_TESTING_AND_OPTIMISATION.md](docs/PHASE5_TESTING_AND_OPTIMISATION.md) |
 
 ## Prerequisites
 
@@ -27,7 +28,7 @@ npm run db:up                 # starts PostgreSQL 16 on localhost:5433 and waits
 npm run db:reset              # drop schema → apply migrations → load synthetic seed (~20 s)
 npm run db:test               # 77 SQL integrity checks + 22 multi-connection concurrency checks
 npm run dev                   # API on http://localhost:4000/api/v1 (tsx watch)
-npm test                      # 49 API integration tests (builds and drops a medshare_api_test database)
+npm test                      # 55 API integration tests (builds and drops a medshare_api_test database)
 ```
 
 | Script | What it does |
@@ -41,6 +42,8 @@ npm test                      # 49 API integration tests (builds and drops a med
 | `test` | Vitest + Supertest API integration tests against real PostgreSQL |
 | `prisma:pull` | Re-introspects the SQL-first schema into `prisma/schema.prisma` |
 | `typecheck` | TypeScript, no emit |
+| `perf:build` | Builds the disposable `medshare_perf` database (migrations ≤ 008 + seed + `db/perf/scale.sql`, ~2 M movements) |
+| `perf:explain` | EXPLAIN (ANALYZE, BUFFERS) study → `docs/perf/EXPLAIN_RESULTS.md` |
 
 ## Environment variables (root `.env`)
 
@@ -59,9 +62,10 @@ npm test                      # 49 API integration tests (builds and drops a med
 ```
 backend/
 ├── db/
-│   ├── migrations/      000 bootstrap · 001 schema · 002 core · 003 triggers · 004 procedures · 005 views · 006 privileges · 007 trigger security
+│   ├── migrations/      000 bootstrap · 001 schema · 002 core · 003 triggers · 004 procedures · 005 views · 006 privileges · 007 trigger security · 008 idempotent stock actions · 009 query performance
 │   ├── seed/            001 reference data · 002 six months of activity via procedures · 003 jobs + integrity assertion
 │   ├── tests/           001_integrity.sql (self-contained, rolled back)
+│   ├── perf/            scale.sql (synthetic load for the EXPLAIN study; perf database only)
 │   └── schema.phase1.sql  Phase 1 design snapshot (historical)
 ├── src/
 │   ├── app.ts, server.ts, config.ts, jobs.ts
@@ -74,7 +78,8 @@ backend/
 ├── scripts/
 │   ├── db.ts            migrate / seed / reset / test runner
 │   ├── lib/database.ts  reusable migrate / seed / create-database helpers
-│   └── concurrency.ts   multi-connection tests (+ withRetry helper)
+│   ├── concurrency.ts   multi-connection tests (+ withRetry helper)
+│   └── perf.ts          scaled-database build and EXPLAIN before/after study
 └── docs/
 ```
 

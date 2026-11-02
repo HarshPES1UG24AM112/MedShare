@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { as, facility, firstManufacturer, isoDate, medicineId, receiveBatch, uniq, users } from './helpers.js';
+import { as, facility, firstManufacturer, isoDate, medicineId, newKey, receiveBatch, uniq, users } from './helpers.js';
 
 describe('medicine catalogue', () => {
   it('creates a combination medicine with ingredients and a generated code', async () => {
@@ -115,5 +115,35 @@ describe('inventory operations', () => {
       ['RECEIPT', 20],
       ['ADJUSTMENT_OUT', -3],
     ]);
+  });
+});
+
+describe('idempotent stock actions (migration 008)', () => {
+  it('a retried dispense with the same key records one movement; another body with that key is refused', async () => {
+    const { inventoryId } = await receiveBatch('FAC-002', 50);
+    const api = await as(users.im('FAC-002'));
+    const key = newKey();
+    const first = await api.post(`/inventory/${inventoryId}/dispense`, { quantity: 7, reference: 'OPD-RETRY' }, key);
+    const retry = await api.post(`/inventory/${inventoryId}/dispense`, { quantity: 7, reference: 'OPD-RETRY' }, key);
+    expect(first.status).toBe(200);
+    expect(retry.status).toBe(200);
+    expect(retry.body.qtyAvailable).toBe(43);
+    const ledger = await api.get(`/inventory/movements?inventoryId=${inventoryId}&type=DISPENSE`);
+    expect(ledger.body.meta.total).toBe(1);
+    const reused = await api.post(`/inventory/${inventoryId}/dispense`, { quantity: 8 }, key);
+    expect(reused.status).toBe(422);
+    expect(reused.body.error.code).toBe('IDEMPOTENCY_KEY_REUSED');
+  });
+
+  it('adjustments and damage honour the key too, and a key cannot be reused across actions', async () => {
+    const { inventoryId } = await receiveBatch('FAC-002', 30);
+    const api = await as(users.im('FAC-002'));
+    const key = newKey();
+    await api.post(`/inventory/${inventoryId}/adjust`, { delta: -4, reason: 'Count correction' }, key);
+    const again = await api.post(`/inventory/${inventoryId}/adjust`, { delta: -4, reason: 'Count correction' }, key);
+    expect(again.body.qtyAvailable).toBe(26);
+    const other = await api.post(`/inventory/${inventoryId}/damage`, { quantity: 4, reason: 'Count correction' }, key);
+    expect(other.status).toBe(422);
+    expect(other.body.error.code).toBe('IDEMPOTENCY_KEY_REUSED');
   });
 });

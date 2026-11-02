@@ -116,3 +116,14 @@ describe('monitoring, redistribution, analytics and admin', () => {
     expect(res.body.error.code).toBe('ROUTE_NOT_FOUND');
   });
 });
+
+describe('alert acknowledgement is a write', () => {
+  it('a read-only auditor cannot acknowledge an alert, even inside their scope', async () => {
+    const auditor = await as(users.auditor);
+    const s = (await auditor.get('/alerts/shortages?pageSize=100')).body.data.find((x: { alertStatus: string }) => x.alertStatus === 'OPEN');
+    const res = await auditor.post(`/alerts/shortages/${s.alertId}/acknowledge`);
+    expect(res.status).toBe(403);
+    const still = (await auditor.get(`/alerts/shortages?facilityId=${s.facilityId}&medicineId=${s.medicineId}`)).body.data[0];
+    expect(still.alertStatus).toBe('OPEN');
+  });
+});

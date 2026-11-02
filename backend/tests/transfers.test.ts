@@ -167,3 +167,34 @@ describe('transfer workflow over HTTP', () => {
     expect(incoming.body.data.every((t: { destinationFacility: { code: string } }) => t.destinationFacility.code === 'FAC-002')).toBe(true);
   });
 });
+
+describe('"needs my action" (actionable=true)', () => {
+  const ids = async (email: string, extra = '') =>
+    ((await (await as(email)).get(`/transfers?actionable=true&pageSize=100${extra}`)).body.data as { id: number }[]).map((t) => t.id);
+
+  it('never offers requesters their own pending transfer to approve', async () => {
+    const { batchId } = await receiveBatch('FAC-001', 30);
+    // The FAC-001 manager requests a push out of their own facility.
+    const own = await (await as(users.fm('FAC-001'))).post('/transfers', {
+      sourceFacilityId: await facility('FAC-001'), destinationFacilityId: await facility('FAC-002'), items: [{ batchId, quantity: 5 }],
+    });
+    expect(own.status).toBe(201);
+    expect(own.body.allowedActions.approve).toEqual([]);
+    expect(await ids(users.fm('FAC-001'))).not.toContain(own.body.id);
+  });
+
+  it('lists a cross-organisation transfer for the organisation admin only after the facility stage', async () => {
+    const { batchId } = await receiveBatch('FAC-001', 40);
+    const t = await (await as(users.im('FAC-014'))).post('/transfers', {
+      sourceFacilityId: await facility('FAC-001'), destinationFacilityId: await facility('FAC-014'), items: [{ batchId, quantity: 6 }],
+    });
+    expect(await ids(users.fm('FAC-001'))).toContain(t.body.id);
+    expect(await ids(users.org1Admin)).toContain(t.body.id); // organisation stage is open in parallel
+    await (await as(users.fm('FAC-001'))).post(`/transfers/${t.body.id}/approve`);
+    expect(await ids(users.fm('FAC-001'))).not.toContain(t.body.id); // facility stage decided
+    expect(await ids(users.org1Admin)).toContain(t.body.id);
+    await (await as(users.org1Admin)).post(`/transfers/${t.body.id}/approve`, { stage: 'SOURCE_ORGANIZATION' });
+    expect(await ids(users.org1Admin)).not.toContain(t.body.id);
+    expect(await ids(users.fm('FAC-001'))).toContain(t.body.id); // now APPROVED: awaiting dispatch at FAC-001
+  });
+});

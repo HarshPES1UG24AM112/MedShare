@@ -141,27 +141,34 @@ router.post(
 const qty = z.number().int().positive().max(10_000_000);
 const reason = z.string().trim().min(3, 'Give a short reason').max(300);
 
-function ledgerRoute(path: string, schema: z.ZodTypeAny, call: (req: Request, inventoryId: number, body: any) => Promise<unknown>) {
+// Every single-row action goes through fn_stock_action (migration 008), which applies the
+// Idempotency-Key in the same transaction as the ledger entry.
+type LedgerArgs = { quantity: number | null; reason: string | null; reference: string | null };
+
+function ledgerRoute(path: string, schema: z.ZodTypeAny, args: (body: any) => LedgerArgs) {
   router.post(
     `/inventory/:id/${path}`,
     handler(async (req, res) => {
       const inventoryId = idParam(req);
-      const body = schema.parse(req.body ?? {});
-      await withRetry(() => call(req, inventoryId, body));
+      const a = args(schema.parse(req.body ?? {}));
+      const key = idempotencyKey(req);
+      await withRetry(() =>
+        query('SELECT fn_stock_action($1, $2, $3, $4, $5, $6, $7)', [currentUser(req).id, inventoryId, path, a.quantity, a.reason, a.reference, key]),
+      );
       res.json(await inventoryRow(inventoryId));
     }),
   );
 }
 
-ledgerRoute('dispense', z.object({ quantity: qty, reference: z.string().trim().max(60).optional() }), (req, inv, b) =>
-  query('SELECT fn_record_dispense($1, $2, $3, $4)', [currentUser(req).id, inv, b.quantity, b.reference ?? null]));
-ledgerRoute('damage', z.object({ quantity: qty, reason }), (req, inv, b) =>
-  query('SELECT fn_record_damage($1, $2, $3, $4)', [currentUser(req).id, inv, b.quantity, b.reason]));
-ledgerRoute('dispose', z.object({ quantity: qty, reason }), (req, inv, b) =>
-  query('SELECT fn_dispose_damaged($1, $2, $3, $4)', [currentUser(req).id, inv, b.quantity, b.reason]));
-ledgerRoute('write-off', z.object({ quantity: qty.optional(), reason: reason.default('Expired stock written off') }), async (req, inv, b) => {
-  const quantity = b.quantity ?? ((await inventoryRow(inv)) as { qtyAvailable: number }).qtyAvailable;
-  return query('SELECT fn_write_off_expired($1, $2, $3, $4)', [currentUser(req).id, inv, quantity, b.reason]);
-});
-ledgerRoute('adjust', z.object({ delta: z.number().int().refine((d) => d !== 0, 'Must be non-zero'), reason }), (req, inv, b) =>
-  query('SELECT fn_adjust_stock($1, $2, $3, $4)', [currentUser(req).id, inv, b.delta, b.reason]));
+ledgerRoute('dispense', z.object({ quantity: qty, reference: z.string().trim().max(60).optional() }), (b) => ({
+  quantity: b.quantity, reason: null, reference: b.reference ?? null,
+}));
+ledgerRoute('damage', z.object({ quantity: qty, reason }), (b) => ({ quantity: b.quantity, reason: b.reason, reference: null }));
+ledgerRoute('dispose', z.object({ quantity: qty, reason }), (b) => ({ quantity: b.quantity, reason: b.reason, reference: null }));
+// Omitting quantity writes off everything available (resolved inside the routine).
+ledgerRoute('write-off', z.object({ quantity: qty.optional(), reason: reason.default('Expired stock written off') }), (b) => ({
+  quantity: b.quantity ?? null, reason: b.reason, reference: null,
+}));
+ledgerRoute('adjust', z.object({ delta: z.number().int().refine((d) => d !== 0, 'Must be non-zero'), reason }), (b) => ({
+  quantity: b.delta, reason: b.reason, reference: null,
+}));

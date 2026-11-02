@@ -15,7 +15,9 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "test": "vitest run",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "perf:build": "tsx scripts/perf.ts build",
+    "perf:explain": "tsx scripts/perf.ts explain"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

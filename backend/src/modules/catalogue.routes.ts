@@ -182,23 +182,31 @@ router.get(
     await requirePermission(req, 'transfer:request', destinationFacilityId);
     res.json(
       await query(
-        `SELECT i.id AS inventory_id, b.id AS batch_id, b.batch_number, b.expiry_date, (b.expiry_date - fn_today()) AS days_to_expiry,
-                i.qty_available, json_build_object('id', f.id, 'code', f.code, 'name', f.name) AS facility,
-                fn_distance_km(f.id, d.id) AS distance_km, (f.organization_id <> d.organization_id) AS cross_organization,
-                ss.stock_status AS source_stock_status
-         FROM inventory i
+        // Authorisation and distance depend only on the facility pair, so they are evaluated once per
+        // partner facility (MATERIALIZED stops the planner inlining them back into the per-batch rows).
+        // See docs/perf/EXPLAIN_RESULTS.md, Q2.
+        `WITH partners AS MATERIALIZED (
+           SELECT f.id, f.code, f.name, f.has_cold_chain, d.has_cold_chain AS destination_cold_chain,
+                  fn_distance_km(f.id, d.id) AS distance_km, (f.organization_id <> d.organization_id) AS cross_organization
+           FROM facilities f
+           JOIN facilities d ON d.id = $2
+           WHERE f.id <> d.id AND f.is_active
+             AND fn_is_transfer_authorised(f.id, d.id)
+             AND fn_distance_km(f.id, d.id) <= f.max_dispatch_radius_km
+         )
+         SELECT i.id AS inventory_id, b.id AS batch_id, b.batch_number, b.expiry_date, (b.expiry_date - fn_today()) AS days_to_expiry,
+                i.qty_available, json_build_object('id', p.id, 'code', p.code, 'name', p.name) AS facility,
+                p.distance_km, p.cross_organization, ss.stock_status AS source_stock_status
+         FROM partners p
+         JOIN inventory i ON i.facility_id = p.id
          JOIN medicine_batches b ON b.id = i.batch_id
          JOIN medicines m ON m.id = b.medicine_id
-         JOIN facilities f ON f.id = i.facility_id
-         JOIN facilities d ON d.id = $2
          CROSS JOIN engine_config e
-         LEFT JOIN v_shortage_status ss ON ss.facility_id = f.id AND ss.medicine_id = m.id
-         WHERE b.medicine_id = $1 AND f.id <> d.id AND f.is_active AND i.qty_available > 0
+         LEFT JOIN v_shortage_status ss ON ss.facility_id = p.id AND ss.medicine_id = m.id
+         WHERE b.medicine_id = $1 AND i.qty_available > 0
            AND b.status = 'ACTIVE' AND b.expiry_date >= fn_today() + e.min_remaining_shelf_life_days
-           AND fn_is_transfer_authorised(f.id, d.id)
-           AND fn_distance_km(f.id, d.id) <= f.max_dispatch_radius_km
-           AND (NOT m.requires_cold_chain OR (f.has_cold_chain AND d.has_cold_chain))
-         ORDER BY b.expiry_date, distance_km
+           AND (NOT m.requires_cold_chain OR (p.has_cold_chain AND p.destination_cold_chain))
+         ORDER BY b.expiry_date, p.distance_km
          LIMIT 50`,
         [medicineId, destinationFacilityId],
       ),
