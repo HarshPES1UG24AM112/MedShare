@@ -23,7 +23,8 @@ const DB_DIR = resolve(here, '../db');
 const adminUrl = process.env.DATABASE_ADMIN_URL;
 if (!adminUrl) throw new Error('DATABASE_ADMIN_URL is not set (see .env.example)');
 
-const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+// Line endings are normalised so a CRLF checkout doesn't look like an edited migration.
+const sha = (s: string) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex');
 const sqlFiles = (dir: string) =>
   readdirSync(join(DB_DIR, dir))
     .filter((f) => f.endsWith('.sql'))

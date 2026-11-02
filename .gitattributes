@@ -1,0 +1,5 @@
+# Keep LF everywhere: migration checksums and shell scripts depend on exact bytes.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
