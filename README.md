@@ -28,6 +28,7 @@ Public and private facilities in the same district routinely hold the wrong stoc
 | Layer | Stack |
 |---|---|
 | Database | PostgreSQL 16 (Docker): PL/pgSQL procedures and triggers, views and a materialized view, GIN trigram, BRIN, partial and covering indexes, exclusion constraint |
+| Graph database (NoSQL) | Neo4j 5 Community (Docker), Cypher: a read model of the facility network (distances, legal supply links, stock, shortages, delivery corridors), rebuilt from PostgreSQL |
 | Backend | Node.js 20+, Express, TypeScript, Zod, JWT (HS256), bcrypt, `pg` for SQL, Prisma as an introspected typed client |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS 4, TanStack Query, React Router, React Hook Form + Zod, Recharts |
 | Tests | PostgreSQL SQL checks, multi-connection concurrency tests, Vitest + Supertest API tests against real PostgreSQL, Vitest + Testing Library frontend tests |
@@ -49,14 +50,20 @@ flowchart LR
     TR[Triggers: ledger → balance · state machine · alerts · audit · immutability]
     V[Views + materialized view]
   end
+  subgraph GDB[Neo4j 5 graph · NoSQL]
+    G[(Facilities · organisations · regions · medicines<br/>ROAD · CAN_SUPPLY · STOCKS · SHORT_OF · SENT)]
+  end
   FE -- JSON /api/v1 --> MW --> SV
   SV -- "medshare_app (least privilege)" --> P --> T
   SV --> V
+  T -. "graph:sync (one REPEATABLE READ snapshot)" .-> G
+  SV -- "Cypher, read-only (/network)" --> G
   TR -. fires on .-> T
 ```
 
 * The API connects as `medshare_app`, which **cannot write** inventory, the ledger or transfers directly. It calls `SECURITY DEFINER` routines that re-check the caller's permission in the database.
 * Inventory balances change **only** through the `inventory_movements` ledger trigger. A reconciliation function proves balances = Σ ledger deltas (0 discrepancies after every test run).
+* PostgreSQL is the system of record. **Neo4j** holds a read-only graph of the facility network, rebuilt from one PostgreSQL snapshot; it answers path and neighbourhood questions for the Network map ([`DBMS_DOCUMENTATION.md` §15](DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j)).
 * The frontend only presents. Buttons for transfer actions come from the server's `allowedActions`, and every write is still re-validated in the database.
 
 Detailed design: [`backend/docs/PHASE1_DATABASE_DESIGN.md`](backend/docs/PHASE1_DATABASE_DESIGN.md) · implementation: [`backend/docs/PHASE2_IMPLEMENTATION.md`](backend/docs/PHASE2_IMPLEMENTATION.md) · frontend: [`frontend/docs/FRONTEND_ARCHITECTURE.md`](frontend/docs/FRONTEND_ARCHITECTURE.md).
@@ -70,8 +77,8 @@ cp .env.example .env            # placeholders work locally; change passwords an
 
 cd backend
 npm install
-npm run db:up                   # PostgreSQL 16 on localhost:5433 (container medshare-postgres)
-npm run db:reset                # migrations 000–009 + deterministic synthetic seed (~20 s)
+npm run db:up                   # PostgreSQL 16 on :5433 and Neo4j 5 on :7474/:7687 (containers medshare-postgres, medshare-neo4j)
+npm run db:reset                # migrations 000–009 + deterministic synthetic seed + graph rebuild (~25 s)
 npm run dev                     # API → http://localhost:4000/api/v1
 
 # in a second terminal
@@ -97,11 +104,13 @@ All configuration is in the root `.env` (git-ignored; template `.env.example`).
 | Variable | Purpose |
 |---|---|
 | `POSTGRES_ADMIN_USER`, `POSTGRES_ADMIN_PASSWORD`, `POSTGRES_PORT` | Database container superuser and host port (5433) |
+| `NEO4J_PASSWORD`, `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT` | Graph database container password (user `neo4j`) and host ports (7474 browser, 7687 Bolt) |
+| `NEO4J_URL`, `NEO4J_USER` | How the API reaches Neo4j; without `NEO4J_URL` the `/network` endpoints answer 503 and everything else still works |
 | `DATABASE_ADMIN_URL` | Superuser connection, used only by migrations, seed, tests and the perf study |
 | `MEDSHARE_APP_PASSWORD`, `DATABASE_URL` | The least-privilege `medshare_app` role the API uses |
 | `JWT_SECRET`, `JWT_EXPIRES_IN` | Token signing (≥ 32 random characters) and lifetime |
 | `PORT`, `CORS_ORIGIN` | API port; allowed browser origin |
-| `JOBS_ENABLED` | Run the expiry, shortage, recommendation and analytics jobs daily in the API process |
+| `JOBS_ENABLED` | Run the expiry, shortage, recommendation, analytics and graph-sync jobs daily in the API process |
 
 The frontend's optional `frontend/.env.local` sets `VITE_API_BASE_URL` and `VITE_PROXY_TARGET` (defaults work).
 
@@ -127,6 +136,10 @@ REST, JSON, `/api/v1`, bearer-token auth, `{ data, meta }` pagination, `Idempote
 
 Data dictionary, functional dependencies and normalisation: [`backend/docs/PHASE1_DATABASE_DESIGN.md` §5–7](backend/docs/PHASE1_DATABASE_DESIGN.md). Everything DBMS-related in one place: **[`DBMS_DOCUMENTATION.md`](DBMS_DOCUMENTATION.md)**.
 
+### Graph database (NoSQL)
+
+Neo4j holds the facility network as a graph: 88 nodes and 928 relationships on the seed. `npm run graph:sync` rebuilds it from PostgreSQL (also done by `db:reset` and the **Sync from PostgreSQL** button), and `npm run graph:queries` runs the 13 documented Cypher queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher). Explore it visually in Neo4j Browser at http://localhost:7474 (user `neo4j`, password `NEO4J_PASSWORD`). Model, sync design and a SQL-vs-Cypher comparison: [`DBMS_DOCUMENTATION.md` §15](DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j).
+
 ## 9. ER diagram
 
 The entity-relationship diagram (crow's foot, Mermaid) is in **[`ER_DIAGRAM.md`](ER_DIAGRAM.md)**. In summary: organisations operate facilities in a recursive region tree; medicines (composed of substances) are produced as global batches; `inventory` resolves facility × batch and carries the balances; every change is an `inventory_movements` row; transfers have lines, per-stage approvals and a status history; stock requests link to transfer lines through fulfilments.
@@ -144,9 +157,10 @@ The entity-relationship diagram (crow's foot, Mermaid) is in **[`ER_DIAGRAM.md`]
 |---|---|---|
 | SQL integrity checks (rolled back) | `cd backend && npm run db:test` | 77 |
 | Multi-connection concurrency (races, isolation, deadlock retry, least privilege) | `npm run db:test` | 22 |
-| API integration tests against real PostgreSQL | `npm test` | 55 |
-| Frontend unit and component tests | `cd frontend && npm test` | 19 |
+| API integration tests against real PostgreSQL and Neo4j | `npm test` | 63 |
+| Frontend unit and component tests | `cd frontend && npm test` | 23 |
 | SQL query catalogue (24 queries, read-only as `medshare_app`) | `cd backend && npm run db:queries` | 24 |
+| Cypher query catalogue (graph database) | `npm run graph:queries` | 13 |
 | Performance study (scaled data, EXPLAIN before/after) | `npm run perf:build && npm run perf:explain` | 4 query families |
 
 The headline concurrency test: facility A holds 150 units, and two transfers of 100 are approved simultaneously. Exactly one succeeds; the other gets `INSUFFICIENT_STOCK` and stays PENDING, and reconciliation reports 0 discrepancies. See [`DBMS_DOCUMENTATION.md` §12](DBMS_DOCUMENTATION.md) and [`backend/docs/PHASE5_TESTING_AND_OPTIMISATION.md`](backend/docs/PHASE5_TESTING_AND_OPTIMISATION.md).
@@ -161,7 +175,7 @@ A 15-minute guided walkthrough for a university demonstration is in **[`docs/DEM
 MedShare/
 ├── API_CONTRACT.md · DBMS_DOCUMENTATION.md · ER_DIAGRAM.md · README.md
 ├── docker-compose.yml · .env.example
-├── backend/     PostgreSQL migrations, seed, SQL tests, perf study, Express API, API tests, design docs
+├── backend/     PostgreSQL migrations, seed, SQL tests, perf study, Neo4j sync and Cypher queries, Express API, API tests, design docs
 ├── frontend/    React app, component tests, frontend docs
 └── docs/        demo walkthrough, screenshots
 ```

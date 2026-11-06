@@ -10,6 +10,9 @@ export const series = {
   s3: '#1baf7a',
 } as const;
 
+/** Categorical colours for unordered groups (organisations on the network map). */
+export const categorical = ['#2a78d6', '#eb6834', '#1baf7a', '#8a5cd0', '#c2477e', '#0f9fb5'] as const;
+
 export const status = {
   critical: '#d64545',
   warning: '#d98a1c',

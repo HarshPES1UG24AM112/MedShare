@@ -39,8 +39,9 @@ type Isolation = 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
 export async function withTransaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>,
   opts: { isolation?: Isolation; readOnly?: boolean } = {},
+  db: pg.Pool = pool,
 ): Promise<T> {
-  const client = await pool.connect();
+  const client = await db.connect();
   try {
     await client.query(`BEGIN ISOLATION LEVEL ${opts.isolation ?? 'READ COMMITTED'}${opts.readOnly ? ' READ ONLY' : ''}`);
     const result = await fn(client);

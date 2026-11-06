@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { prisma } from './db/prisma.js';
+import { closeGraph } from './graph/neo4j.js';
 import { startScheduler } from './jobs.js';
 
 const app = createApp();
@@ -14,7 +15,7 @@ async function shutdown(signal: string) {
   console.log(`${signal} received, shutting down`);
   if (timer) clearInterval(timer);
   server.close();
-  await Promise.allSettled([pool.end(), prisma.$disconnect()]);
+  await Promise.allSettled([pool.end(), prisma.$disconnect(), closeGraph()]);
   process.exit(0);
 }
 process.on('SIGINT', () => void shutdown('SIGINT'));

@@ -4,6 +4,7 @@
  * or on demand via POST /api/v1/admin/jobs/:job.
  */
 import { query, withTransaction } from './db/pool.js';
+import { syncGraph } from './graph/sync.js';
 
 export const JOBS = {
   'expiry-alerts': async () => ({ newAlerts: (await query<{ n: number }>('SELECT fn_generate_expiry_alerts() AS n'))[0].n }),
@@ -16,6 +17,11 @@ export const JOBS = {
   'analytics-refresh': async () => {
     await query('SELECT fn_refresh_analytics()');
     return { refreshed: 'mv_monthly_consumption' };
+  },
+  // Last, so the graph picks up the alerts and recommendations the jobs above just produced.
+  'graph-sync': async () => {
+    const r = await syncGraph();
+    return { syncedAt: r.syncedAt, nodes: r.nodes, relationships: r.relationships };
   },
 } as const;
 

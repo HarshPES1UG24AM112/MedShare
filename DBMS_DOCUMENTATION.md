@@ -20,6 +20,7 @@ This document collects everything about MedShare's database in one place. It sum
 | 12 | [Transactions, concurrency and isolation](#12-transactions-concurrency-and-isolation) |
 | 13 | [SQL query catalogue (24 queries)](#13-sql-query-catalogue) |
 | 14 | [Security, auditing, testing and limitations](#14-security-auditing-testing-and-limitations) |
+| 15 | [NoSQL: the graph database (Neo4j)](#15-nosql-the-graph-database-neo4j) |
 
 ---
 
@@ -721,3 +722,93 @@ ORDER BY a.name, b.name;
 * `/medicines` still aggregates network stock for every medicine before paginating (~0.37 s at 9 k medicines); a precomputed summary would trade freshness for speed.
 * The perf dataset bypasses ledger triggers, so it is suitable for plans, not for reconciliation.
 * MedShare is a simulation and is not validated for clinical or regulatory use.
+
+## 15. NoSQL: the graph database (Neo4j)
+
+MedShare also stores the facility network in **Neo4j 5**, a graph database (a NoSQL model), next to PostgreSQL. This is *polyglot persistence*: each database does the job it is best at.
+
+| | PostgreSQL (relational) | Neo4j (graph, NoSQL) |
+|---|---|---|
+| Role | **System of record**: every write, every rule, the ledger | **Read model** of the network, rebuilt from PostgreSQL |
+| Data model | Tables, rows, foreign keys | Nodes and relationships, each with properties |
+| Query language | SQL | Cypher (pattern matching) |
+| Good at | Transactions, constraints, aggregates | Paths, neighbourhoods, multi-hop patterns |
+| Consistency | ACID, serialisable where needed | Rebuilt atomically from one snapshot; eventually consistent with PostgreSQL |
+
+### 15.1 Graph model
+
+```
+(:Facility)-[:BELONGS_TO]->(:Organisation)      (:Facility)-[:LOCATED_IN]->(:Region)-[:PART_OF]->(:Region)
+(:Facility)-[:ROAD {km}]->(:Facility)            one per pair (105 for 15 facilities); distance is symmetric
+(:Facility)-[:CAN_SUPPLY {km, sameOrg}]->(:Facility)    a transfer request PostgreSQL would accept
+(:Organisation)-[:AGREEMENT {validFrom, validTo, inForce}]->(:Organisation)
+(:Facility)-[:STOCKS {usable, reserved, nearestExpiry}]->(:Medicine)
+(:Facility)-[:SHORT_OF {status, usable, daysOfCover, dailyRate, demandBasis}]->(:Medicine)
+(:Facility)-[:SENT {transfers, units, lastReceivedAt}]->(:Facility)       completed deliveries
+```
+
+Seeded graph: 88 nodes (15 facilities, 5 organisations, 18 regions, 50 medicines) and 928 relationships (105 ROAD, 77 CAN_SUPPLY, 565 STOCKS, 112 SHORT_OF, 16 SENT, 6 AGREEMENT, 17 PART_OF, 15 BELONGS_TO, 15 LOCATED_IN). Uniqueness constraints on `id` for every node label double as lookup indexes. Facilities also carry a spatial `point` for `point.distance`.
+
+### 15.2 Synchronisation and consistency
+
+[`backend/src/graph/sync.ts`](backend/src/graph/sync.ts) reads PostgreSQL in **one REPEATABLE READ, READ ONLY transaction** as the least-privilege `medshare_app` role, then rebuilds the graph in **one Neo4j write transaction**. Readers see either the old graph or the new one, never a half-built one. A full rebuild, not an incremental diff, keeps the read model provably consistent: it can never hold a fact PostgreSQL does not.
+
+* **Same rules, one implementation.** `ROAD.km` and `CAN_SUPPLY` come from the same SQL functions the transfer workflow uses (`fn_distance_km`, `fn_is_transfer_authorised`), so the graph cannot disagree with what a transfer request would accept. An API test asserts that the graph's supply links equal the set PostgreSQL computes.
+* **When it syncs:** `npm run db:reset` (automatically), `npm run graph:sync`, the admin job `POST /admin/jobs/graph-sync` (the **Sync from PostgreSQL** button), and the daily jobs when `JOBS_ENABLED=true`. Between syncs the graph is a snapshot, and the Network map shows when it was taken.
+* **Writes never go to Neo4j.** If Neo4j is down, every PostgreSQL feature keeps working; the `/network` endpoints answer `503 GRAPH_UNAVAILABLE`.
+
+### 15.3 Same question, two databases
+
+*"For every critical shortage, which legal supplier holding the medicine is nearest?"*
+
+```sql
+-- SQL: four joins, two function calls per candidate pair, DISTINCT ON for "nearest"
+SELECT DISTINCT ON (d.facility_id, d.medicine_id)
+       d.facility_code, d.medicine_name, s.code AS supplier, fn_distance_km(s.id, d.facility_id) AS km
+FROM v_shortage_status d
+JOIN v_facility_stock st ON st.medicine_id = d.medicine_id AND st.usable > 0 AND st.facility_id <> d.facility_id
+JOIN facilities s  ON s.id = st.facility_id AND s.is_active
+JOIN facilities df ON df.id = d.facility_id AND df.is_active
+WHERE d.stock_status = 'CRITICAL'
+  AND fn_distance_km(s.id, d.facility_id) <= s.max_dispatch_radius_km
+  AND fn_is_transfer_authorised(s.id, d.facility_id)
+ORDER BY d.facility_id, d.medicine_id, km, s.code;
+```
+
+```cypher
+// Cypher: the question is one pattern
+MATCH (d:Facility)-[sh:SHORT_OF {status: 'CRITICAL'}]->(m:Medicine)<-[st:STOCKS]-(s:Facility)-[c:CAN_SUPPLY]->(d)
+WITH d, m, s, c ORDER BY c.km, s.code
+RETURN d.code, m.name, collect(s.code)[0] AS supplier, collect(c.km)[0] AS km;
+```
+
+Both return the same 76 pairs on the seeded data (identical MD5 fingerprint of the sorted rows). The graph version is shorter because the eligibility rules were evaluated once, at sync time, and stored as `CAN_SUPPLY` relationships.
+
+### 15.4 Cypher query catalogue
+
+Thirteen queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher); `npm run graph:queries` runs them all. Paste any into Neo4j Browser (http://localhost:7474, user `neo4j`, password `NEO4J_PASSWORD` from `.env`) to see the result drawn as a graph.
+
+| # | Question | Graph technique |
+|---|---|---|
+| G01 | What the graph holds | Label counts |
+| G02 | Distance between two facilities | Undirected relationship match |
+| G03 | Five nearest facilities | Neighbourhood + ORDER BY property |
+| G04 | Who may supply a facility | Directed relationship + second pattern |
+| G05 | Nearest legal supplier for every critical shortage | Five-hop pattern, `collect()[0]` |
+| G06 | Critical shortages no legal supplier can cover | `NOT EXISTS { pattern }` |
+| G07 | Least-connected facilities | Degree with `COUNT { pattern }` |
+| G08 | Shortest relay between facilities that cannot trade directly | `shortestPath` over variable length `*..4` |
+| G09 | Busiest supply corridors | Relationship properties |
+| G10 | Agreements in force | Organisation-to-organisation relationships |
+| G11 | Usable stock rolled up to districts | Variable-length `PART_OF*0..` walk |
+| G12 | Facilities within 25 km as the crow flies | Spatial `point.distance` |
+| G13 | Expiring stock a legal partner is short of | Pattern + date arithmetic |
+
+### 15.5 API, interface and tests
+
+* **API** (`/api/v1/network/…`, [API_CONTRACT §2](API_CONTRACT.md#network-graph-read-model)): status, the whole graph for the map, distance plus shortest supply chain, and suppliers of a facility (optionally holding one medicine). Facility scope applies: shortages and suppliers are shown only for facilities the user may see.
+* **Interface:** the **Network map** page draws the facilities by their real direction from each other, with three layers (supply links, delivery corridors, distances), a distance tool that draws the shortest legal supply chain, and a supplier finder.
+* **Tests:** 8 API tests against real Neo4j (graph equals PostgreSQL's supply set, distances equal `fn_distance_km`, shortest chain, scope, admin-only sync) and 4 frontend tests for the map. The tests rebuild the graph from the test database and restore the development graph afterwards, because Neo4j Community has a single database.
+
+**Limitations.** The graph is a snapshot between syncs, not live. Neo4j Community has no role-based access control, so facility scope is enforced by the API, not the graph database. Distances are still the great-circle × 1.3 estimate, not road routing.
+

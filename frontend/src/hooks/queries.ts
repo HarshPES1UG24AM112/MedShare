@@ -65,6 +65,10 @@ export const qk = {
   users: (p: UserListParams) => ['users', 'list', p] as const,
   user: (id: number) => ['users', 'detail', id] as const,
   roles: ['reference', 'roles'] as const,
+  networkStatus: ['network', 'status'] as const,
+  networkGraph: ['network', 'graph'] as const,
+  networkDistance: (from: number, to: number) => ['network', 'distance', from, to] as const,
+  networkSuppliers: (facilityId: number, medicineId?: number) => ['network', 'suppliers', facilityId, medicineId ?? 'all'] as const,
 };
 
 /** Stock-affecting mutations invalidate every view derived from inventory. */
@@ -173,6 +177,25 @@ export const useTransfer = (id: number | undefined) =>
 export const useStockRequests = (p: StockRequestListParams) =>
   useQuery({ queryKey: qk.stockRequests(p), queryFn: () => api.stockRequests.list(p), placeholderData: keepPreviousData });
 
+/* The facility network comes from the Neo4j read model, which changes only when it is re-synced. */
+export const useNetworkStatus = () => useQuery({ queryKey: qk.networkStatus, queryFn: () => api.network.status() });
+export const useNetworkGraph = () => useQuery({ queryKey: qk.networkGraph, queryFn: () => api.network.graph(), staleTime: 60_000 });
+export const useNetworkDistance = (from?: number, to?: number) =>
+  useQuery({
+    queryKey: qk.networkDistance(from ?? 0, to ?? 0),
+    queryFn: () => api.network.distance(from!, to!),
+    enabled: Boolean(from && to && from !== to),
+    staleTime: 60_000,
+  });
+export const useNetworkSuppliers = (facilityId?: number, medicineId?: number) =>
+  useQuery({
+    queryKey: qk.networkSuppliers(facilityId ?? 0, medicineId),
+    queryFn: () => api.network.suppliers(facilityId!, medicineId),
+    enabled: Boolean(facilityId),
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
 export const useAnalytics = (p: AnalyticsParams) =>
   useQuery({ queryKey: qk.analytics(p), queryFn: () => api.analytics.overview(p), placeholderData: keepPreviousData });
 
@@ -248,6 +271,12 @@ export function useMarkNotificationRead() {
 export function useRunEngine() {
   const invalidate = useInvalidate();
   return useMutation({ mutationFn: () => api.redistribution.run(), onSuccess: () => invalidate(['redistribution', 'dashboard', 'analytics', 'audit']) });
+}
+
+/** Rebuilds the Neo4j graph from PostgreSQL (system administrators only). */
+export function useSyncNetwork() {
+  const invalidate = useInvalidate();
+  return useMutation({ mutationFn: () => api.network.sync(), onSuccess: () => invalidate(['network', 'audit']) });
 }
 
 export function useAcceptRecommendation() {

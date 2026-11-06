@@ -7,8 +7,8 @@ A scripted demo that shows the product first, then proves the database guarantee
 ```bash
 # Docker Desktop running; repo root has .env (copy of .env.example)
 cd backend
-npm run db:up
-npm run db:reset          # fresh deterministic seed; ends with "reconciliation discrepancies: 0"
+npm run db:up             # PostgreSQL and Neo4j
+npm run db:reset          # fresh deterministic seed; ends with "reconciliation discrepancies: 0" and the graph rebuild
 npm run dev               # API :4000
 ```
 
@@ -112,6 +112,30 @@ Open [`backend/docs/perf/EXPLAIN_RESULTS.md`](../backend/docs/perf/EXPLAIN_RESUL
 * the plan showed the time was not a missing index but a VOLATILE function evaluated ~1.3 M times and a correlated subquery run 9,050 times;
 * migration 009 fixed both: **0.37 s**, with the rows of the affected views proved identical before and after.
 
+## Part 6: The graph database (optional, 3 min)
+
+MedShare's second database is **Neo4j**, a graph database (NoSQL). PostgreSQL stays the system of record; Neo4j holds a read-only graph of the network, rebuilt from one PostgreSQL snapshot.
+
+1. In the app, open **Network map** (any account). Say: *these are the 15 facilities, placed by their real direction from each other; every line is a supply link the database would accept.*
+   * Click **FAC-009**. Green lines are facilities that may supply it, blue ones it may supply, each with its distance.
+   * In **Distance between facilities**, choose **FAC-003**: there is no direct link, so the page draws the shortest legal chain, FAC-009 → FAC-012 → FAC-003 (47.7 km). That is `shortestPath` in Cypher.
+   * Switch to **Delivery corridors** (completed transfers, thicker = more units) and **Distances**.
+   * In **Who may supply …**, pick *Paracetamol*: one graph query joins supply links to stock.
+2. Open Neo4j Browser at http://localhost:7474 (user `neo4j`, password `NEO4J_PASSWORD` from `.env`) and run:
+
+```cypher
+// The whole network: facilities, organisations and who may supply whom
+MATCH p = (:Facility)-[:CAN_SUPPLY]->(:Facility) RETURN p;
+
+// Nearest legal supplier for every critical shortage: one five-hop pattern
+MATCH (d:Facility)-[:SHORT_OF {status: 'CRITICAL'}]->(m:Medicine)<-[st:STOCKS]-(s:Facility)-[c:CAN_SUPPLY]->(d)
+WITH d, m, s, c ORDER BY c.km
+RETURN d.code, m.name, collect(s.code)[0] AS supplier, collect(c.km)[0] AS km LIMIT 10;
+```
+
+3. Say: *the same question in SQL needs four joins and two function calls per pair* (show [DBMS §15.3](../DBMS_DOCUMENTATION.md#153-same-question-two-databases)). *Both databases return the same 76 answers; the API tests prove the graph's supply links equal what PostgreSQL computes.*
+4. Optionally, in a terminal: `cd backend && npm run graph:queries` runs all 13 documented Cypher queries.
+
 ## Likely questions
 
 | Question | Short answer (and where it is documented) |
@@ -120,4 +144,6 @@ Open [`backend/docs/perf/EXPLAIN_RESULTS.md`](../backend/docs/perf/EXPLAIN_RESUL
 | Why reserve at approval, not at request? | Requests shouldn't lock stock that the source may refuse. [Phase 1 §8.3](../backend/docs/PHASE1_DATABASE_DESIGN.md#83-reservation-at-approval-not-at-request) |
 | Why READ COMMITTED + `FOR UPDATE` and not SERIALIZABLE everywhere? | Row locks give a deterministic "wait, then re-check" for the hot path. SERIALIZABLE is shown in the tests, with retry. [DBMS §12](../DBMS_DOCUMENTATION.md#12-transactions-concurrency-and-isolation) |
 | Is the data real? | No. Everything is synthetic and labelled; analytics responses say so in `meta.synthetic`. |
+| Why a second database? | The network is a graph: paths and neighbourhoods are one Cypher pattern. PostgreSQL keeps every write and rule; Neo4j is a read model rebuilt from it. [DBMS §15](../DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j) |
+| Can the two databases disagree? | Only between syncs (the page shows when it last synced). A sync rebuilds the whole graph from one snapshot in one transaction, using the same SQL functions as transfers. |
 | What would production need? | Road distances, forecasting, institutional authorisation, regulatory validation, real identity management. [DBMS §14](../DBMS_DOCUMENTATION.md#14-security-auditing-testing-and-limitations) |

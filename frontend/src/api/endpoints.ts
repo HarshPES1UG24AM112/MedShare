@@ -86,4 +86,11 @@ export const endpoints = {
   audit: {
     list: '/audit-logs',
   },
+  network: {
+    status: '/network/status',
+    graph: '/network/graph',
+    distance: '/network/distance',
+    suppliers: (facilityId: number) => `/network/facilities/${facilityId}/suppliers`,
+    sync: '/admin/jobs/graph-sync',
+  },
 } as const;

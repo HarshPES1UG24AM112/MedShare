@@ -1,5 +1,9 @@
 import type {
   AnalyticsOverview,
+  NetworkDistance,
+  NetworkGraph,
+  NetworkStatus,
+  NetworkSuppliers,
   AnalyticsParams,
   AuditListParams,
   AuditLog,
@@ -154,5 +158,12 @@ export interface MedShareApi {
   };
   audit: {
     list(params: AuditListParams): Promise<Paginated<AuditLog>>;
+  };
+  network: {
+    status(): Promise<NetworkStatus>;
+    graph(): Promise<NetworkGraph>;
+    distance(from: number, to: number): Promise<NetworkDistance>;
+    suppliers(facilityId: number, medicineId?: number): Promise<NetworkSuppliers>;
+    sync(): Promise<{ job: string; syncedAt: string }>;
   };
 }

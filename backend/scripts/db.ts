@@ -53,6 +53,23 @@ async function test(client: pg.Client) {
   }
 }
 
+// A fresh seed makes the Neo4j read model stale, so reset rebuilds it too. The graph is
+// optional: when Neo4j is not configured or not running, reset still succeeds.
+async function rebuildGraph() {
+  const { graphConfigured, closeGraph } = await import('../src/graph/neo4j.js');
+  if (!graphConfigured()) return console.log('Graph: NEO4J_URL not set, skipped.');
+  const { syncGraph } = await import('../src/graph/sync.js');
+  const { pool } = await import('../src/db/pool.js');
+  try {
+    const r = await syncGraph();
+    console.log(`Graph rebuilt: ${Object.entries(r.nodes).map(([k, n]) => `${n} ${k}`).join(', ')}.`);
+  } catch (e) {
+    console.warn(`Graph: not rebuilt (${(e as Error).message}). Run \`npm run graph:sync\` once Neo4j is up.`);
+  } finally {
+    await Promise.allSettled([closeGraph(), pool.end()]);
+  }
+}
+
 const cmd = process.argv[2];
 const client = await connect(adminUrl);
 try {
@@ -63,6 +80,7 @@ try {
     console.log('Schema dropped.');
     await migrate(client, { appPassword });
     await seed(client);
+    await rebuildGraph();
   } else if (cmd === 'test') await test(client);
   else {
     console.error('usage: db.ts migrate | seed | reset | test');

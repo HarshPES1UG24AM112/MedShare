@@ -28,6 +28,7 @@ const BatchesPage = lazy(() => import('@/features/batches/BatchesPage'));
 const UsersPage = lazy(() => import('@/features/users/UsersPage'));
 const StockRequestsPage = lazy(() => import('@/features/stock-requests/StockRequestsPage'));
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage'));
+const NetworkPage = lazy(() => import('@/features/network/NetworkPage'));
 const AuditPage = lazy(() => import('@/features/audit/AuditPage'));
 
 function PageFallback() {
@@ -71,6 +72,7 @@ export function App() {
                   <Route path="transfers/history" element={<TransferHistoryPage />} />
                   <Route path="users" element={<UsersPage />} />
                   <Route path="analytics" element={<AnalyticsPage />} />
+                  <Route path="network" element={<NetworkPage />} />
                   <Route
                     path="audit"
                     element={

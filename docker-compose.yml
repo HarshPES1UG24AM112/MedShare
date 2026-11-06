@@ -19,5 +19,27 @@ services:
       timeout: 3s
       retries: 20
 
+  # Graph database (NoSQL): a read model of the facility network, rebuilt from
+  # PostgreSQL by `npm run graph:sync`. PostgreSQL stays the system of record.
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: medshare-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 128m
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - medshare-neo4jdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+
 volumes:
   medshare-pgdata:
+  medshare-neo4jdata:

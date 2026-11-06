@@ -17,6 +17,10 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+  // Graph read model (Neo4j). Optional: without it the /network endpoints answer 503.
+  NEO4J_URL: z.string().url().optional(),
+  NEO4J_USER: z.string().default('neo4j'),
+  NEO4J_PASSWORD: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

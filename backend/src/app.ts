@@ -12,6 +12,7 @@ import * as analytics from './modules/analytics.routes.js';
 import * as auth from './modules/auth.routes.js';
 import * as catalogue from './modules/catalogue.routes.js';
 import * as inventory from './modules/inventory.routes.js';
+import * as network from './modules/network.routes.js';
 import * as organizations from './modules/organizations.routes.js';
 import * as redistribution from './modules/redistribution.routes.js';
 import * as transfers from './modules/transfers.routes.js';
@@ -39,7 +40,7 @@ export function createApp() {
   );
 
   const api = express.Router();
-  for (const m of [auth, users, organizations, catalogue, inventory, alerts, redistribution, transfers, analytics, admin]) api.use(m.router);
+  for (const m of [auth, users, organizations, catalogue, inventory, alerts, redistribution, transfers, analytics, network, admin]) api.use(m.router);
   app.use('/api/v1', api);
 
   app.use(notFoundHandler);

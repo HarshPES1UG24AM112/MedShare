@@ -930,3 +930,81 @@ export interface AuditListParams extends ListParams {
   from?: string;
   to?: string;
 }
+
+/* ------------------------------------------------- network (Neo4j graph) ---- */
+
+export interface NetworkStatus {
+  configured: boolean;
+  reachable: boolean;
+  syncedAt?: string | null;
+  source?: string | null;
+  nodes?: Record<string, number>;
+  relationships?: Record<string, number>;
+  error?: string;
+}
+
+export interface NetworkFacility {
+  id: number;
+  code: string;
+  name: string;
+  type: FacilityType;
+  lat: number;
+  lon: number;
+  coldChain: boolean;
+  radiusKm: number;
+  active: boolean;
+  organizationId: number;
+  regionName: string;
+  /** Facilities that may supply this one / this one may supply. */
+  suppliers: number;
+  canSupply: number;
+  /** null outside the user's facility scope. */
+  criticalShortages: number | null;
+  lowShortages: number | null;
+}
+
+export interface NetworkGraph {
+  syncedAt: string;
+  source: string;
+  facilities: NetworkFacility[];
+  organisations: { id: number; name: string; type: string }[];
+  /** Ordered pairs a transfer request would accept (inside the source's dispatch radius, legal route). */
+  supplyLinks: { source: number; destination: number; km: number; sameOrg: boolean }[];
+  /** Every pair once; distance is symmetric. */
+  roads: { a: number; b: number; km: number }[];
+  /** Completed deliveries per direction, limited to the user's scope. */
+  corridors: { source: number; destination: number; transfers: number; units: number; lastReceivedAt: string }[];
+}
+
+export interface NetworkFacilityRef {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface NetworkDistance {
+  from: NetworkFacilityRef;
+  to: NetworkFacilityRef;
+  routedKm: number;
+  straightLineKm: number;
+  fromCanSupplyTo: boolean;
+  toCanSupplyFrom: boolean;
+  supplyChain: { facilities: NetworkFacilityRef[]; hops: number; km: number } | null;
+}
+
+export interface NetworkSupplier extends NetworkFacilityRef {
+  type: FacilityType;
+  coldChain: boolean;
+  organizationName: string;
+  km: number;
+  sameOrg: boolean;
+  usable: number | null;
+  nearestExpiry: string | null;
+}
+
+export interface NetworkSuppliers {
+  syncedAt: string;
+  facilityId: number;
+  medicineId: number | null;
+  suppliers: NetworkSupplier[];
+}

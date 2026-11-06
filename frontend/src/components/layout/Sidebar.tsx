@@ -10,6 +10,7 @@ import {
   History,
   LayoutDashboard,
   Layers,
+  Network,
   Pill,
   ScrollText,
   Shuffle,
@@ -53,6 +54,7 @@ const NAV: { heading: string; items: NavItem[] }[] = [
       { to: '/inventory', label: 'Stock', icon: Boxes, permission: 'inventory:read' },
       { to: '/inventory/movements', label: 'Stock movements', icon: Activity, permission: 'inventory:read' },
       { to: '/facilities', label: 'Facilities', icon: Building2 },
+      { to: '/network', label: 'Network map', icon: Network },
     ],
   },
   {

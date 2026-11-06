@@ -206,6 +206,17 @@ A request closes automatically when every line has been fully received through l
 | GET | `/dashboard/summary?facilityId=` | `{ totalFacilities, registeredMedicines, medicinesInStock, totalInventoryUnits, criticalShortages, lowStock, expiringBatches30d, expiredBatchesOnHand, pendingTransfers, awaitingDispatch, inTransit, openRecommendations, openStockRequests, unreadNotifications, scope }` |
 | GET | `/analytics/overview?facilityId=&months=3..24&medicineId=` | one REPEATABLE READ snapshot: `inventoryDistribution, expiryTrend (12 months), shortageRisk, recurringShortages, transferStats, transferStatusBreakdown, transferTiming, transferCompletionRate, movementTrend, stockByCategory, availabilityByRegion (recursive rollup; filter with medicineId), expiryRisk, wastage, redistribution, monthlyConsumption, topConsumedLastMonth, demandBasis, meta{ synthetic, note, months, scope }` |
 
+### Network (graph read model)
+
+Answered from Neo4j, which is rebuilt from PostgreSQL (see [DBMS_DOCUMENTATION §15](DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j)). Every route needs a signed-in user. When Neo4j is not configured or unreachable they answer `503 GRAPH_UNAVAILABLE`; before the first sync, `503 GRAPH_NOT_SYNCED`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/network/status` | never fails: `{ configured, reachable, syncedAt, source, nodes{label: n}, relationships{type: n}, error? }` |
+| GET | `/network/graph` | `{ syncedAt, source, facilities[{ id, code, name, type, lat, lon, coldChain, radiusKm, active, organizationId, regionName, suppliers, canSupply, criticalShortages, lowShortages }], organisations[], supplyLinks[{ source, destination, km, sameOrg }], roads[{ a, b, km }], corridors[{ source, destination, transfers, units, lastReceivedAt }] }`. `criticalShortages`/`lowShortages` are `null` outside the caller's scope; `corridors` only include deliveries with either end in scope. |
+| GET | `/network/distance?from=&to=` | `{ from, to, routedKm, straightLineKm, fromCanSupplyTo, toCanSupplyFrom, supplyChain: { facilities[], hops, km } \| null }`. `routedKm` = `fn_distance_km` (great-circle × 1.3); `supplyChain` is the shortest chain of supply links (up to 4 hops). Same facility twice → 422. |
+| GET | `/network/facilities/:id/suppliers?medicineId=` | scope-checked (403 outside scope). `{ syncedAt, facilityId, medicineId, suppliers[{ id, code, name, type, coldChain, organizationName, km, sameOrg, usable, nearestExpiry }] }`, nearest first; with `medicineId`, only suppliers holding it. |
+
 ### Audit & administration
 
 | Method | Path | Notes |
@@ -213,7 +224,7 @@ A request closes automatically when every line has been fully received through l
 | GET | `/audit-logs` *paged* | `audit:read`. Filters: `entityType`, `entityId`, `action`, `actorId`, `facilityId`, `from`, `to`. Organisation-scoped auditors see their facilities only. Read-only: no endpoint changes audit entries. |
 | POST | `/admin/reconciliation` | `report:read`; `{ facilityId? }` → `{ count, discrepancies[], isolation: 'REPEATABLE READ' }` |
 | GET / PATCH | `/admin/engine-config` | read: any signed-in user; update: system admin |
-| POST | `/admin/jobs/:job` | system admin; `expiry-alerts`, `shortage-alerts`, `recommendations`, `analytics-refresh` |
+| POST | `/admin/jobs/:job` | system admin; `expiry-alerts`, `shortage-alerts`, `recommendations`, `analytics-refresh`, `graph-sync` (rebuilds the Neo4j graph; returns `{ syncedAt, nodes, relationships }`) |
 | GET | `/admin/roles` | roles with their permissions |
 
 ---
@@ -247,3 +258,15 @@ All changes are backwards compatible for well-behaved clients; no path, field or
 | `POST /alerts/*/:alertId/acknowledge` | Also requires `inventory:write` at the alert's facility (403 otherwise). | Acknowledging changes shared state; read-only auditors could do it. |
 | `GET /transfers?actionable=true` | Excludes the caller's own PENDING requests and stages already decided; includes cross-organisation transfers awaiting the caller's organisation stage. | It now matches `allowedActions` exactly. |
 | `GET /medicines/:id/sources` | Same rows and order; evaluated per partner facility. | 591 → 43 ms on the scaled dataset (`backend/docs/perf/EXPLAIN_RESULTS.md`). |
+
+---
+
+## 5. Additions (graph database)
+
+New, additive endpoints; nothing existing changed.
+
+| Endpoint | Change | Reason |
+|---|---|---|
+| `GET /network/status`, `/network/graph`, `/network/distance`, `/network/facilities/:id/suppliers` | New, read-only, answered from Neo4j | The project needed a NoSQL database; the facility network is a graph. |
+| `POST /admin/jobs/graph-sync` | New job name | Rebuild the graph on demand from PostgreSQL. |
+
