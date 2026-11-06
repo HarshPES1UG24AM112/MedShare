@@ -85,3 +85,27 @@ MATCH (s:Facility)-[st:STOCKS]->(m:Medicine)<-[sh:SHORT_OF]-(d:Facility)
 WHERE (s)-[:CAN_SUPPLY]->(d) AND st.nearestExpiry < date() + duration({days: 60})
 RETURN s.code AS holder, m.name AS medicine, st.usable AS usable, st.nearestExpiry AS expires, d.code AS shortFacility, sh.status AS status
 ORDER BY expires, holder LIMIT 10;
+
+// G14: The network as a picture: every legal supply link (returns paths, drawn as a graph)
+MATCH p = (:Facility)-[:CAN_SUPPLY]->(:Facility)
+RETURN p;
+
+// G15: Which organisation runs which facility, and the agreements between organisations
+MATCH p = (:Facility)-[:BELONGS_TO]->(:Organisation)
+RETURN p
+UNION ALL
+MATCH p = (:Organisation)-[:AGREEMENT {inForce: true}]->(:Organisation)
+RETURN p;
+
+// G16: The shortest legal supply chain as a path (FAC-009 cannot supply FAC-003 directly)
+MATCH (a:Facility {code: 'FAC-009'}), (b:Facility {code: 'FAC-003'})
+MATCH p = shortestPath((a)-[:CAN_SUPPLY*..4]->(b))
+RETURN p;
+
+// G17: The region tree with its facilities (state › district › taluk)
+MATCH p = (:Facility)-[:LOCATED_IN]->(:Region)-[:PART_OF*0..]->(:Region {level: 'STATE'})
+RETURN p;
+
+// G18: One facility's neighbourhood: its critical shortages and the nearby suppliers that hold them
+MATCH p = (d:Facility {code: 'FAC-002'})-[:SHORT_OF {status: 'CRITICAL'}]->(m:Medicine)<-[:STOCKS]-(s:Facility)-[:CAN_SUPPLY]->(d)
+RETURN p;

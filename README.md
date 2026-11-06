@@ -138,7 +138,7 @@ Data dictionary, functional dependencies and normalisation: [`backend/docs/PHASE
 
 ### Graph database (NoSQL)
 
-Neo4j holds the facility network as a graph: 88 nodes and 928 relationships on the seed. `npm run graph:sync` rebuilds it from PostgreSQL (also done by `db:reset` and the **Sync from PostgreSQL** button), and `npm run graph:queries` runs the 13 documented Cypher queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher). Explore it visually in Neo4j Browser at http://localhost:7474 (user `neo4j`, password `NEO4J_PASSWORD`). Model, sync design and a SQL-vs-Cypher comparison: [`DBMS_DOCUMENTATION.md` §15](DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j).
+Neo4j holds the facility network as a graph: 88 nodes and 928 relationships on the seed. `npm run graph:sync` rebuilds it from PostgreSQL (also done by `db:reset` and the **Sync from PostgreSQL** button), and `npm run graph:queries` runs the 18 documented Cypher queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher). Explore it visually inside the app: **Network map → Query explorer (Cypher)**, for the admin and platform auditor, runs read-only Cypher and draws the result as a graph. Neo4j Browser at http://localhost:7474 (user `neo4j`, password `NEO4J_PASSWORD`) also works. Model, sync design and a SQL-vs-Cypher comparison: [`DBMS_DOCUMENTATION.md` §15](DBMS_DOCUMENTATION.md#15-nosql-the-graph-database-neo4j).
 
 ## 9. ER diagram
 
@@ -157,10 +157,10 @@ The entity-relationship diagram (crow's foot, Mermaid) is in **[`ER_DIAGRAM.md`]
 |---|---|---|
 | SQL integrity checks (rolled back) | `cd backend && npm run db:test` | 77 |
 | Multi-connection concurrency (races, isolation, deadlock retry, least privilege) | `npm run db:test` | 22 |
-| API integration tests against real PostgreSQL and Neo4j | `npm test` | 63 |
-| Frontend unit and component tests | `cd frontend && npm test` | 23 |
+| API integration tests against real PostgreSQL and Neo4j | `npm test` | 66 |
+| Frontend unit and component tests | `cd frontend && npm test` | 27 |
 | SQL query catalogue (24 queries, read-only as `medshare_app`) | `cd backend && npm run db:queries` | 24 |
-| Cypher query catalogue (graph database) | `npm run graph:queries` | 13 |
+| Cypher query catalogue (graph database) | `npm run graph:queries` | 18 |
 | Performance study (scaled data, EXPLAIN before/after) | `npm run perf:build && npm run perf:explain` | 4 query families |
 
 The headline concurrency test: facility A holds 150 units, and two transfers of 100 are approved simultaneously. Exactly one succeeds; the other gets `INSUFFICIENT_STOCK` and stays PENDING, and reconciliation reports 0 discrepancies. See [`DBMS_DOCUMENTATION.md` §12](DBMS_DOCUMENTATION.md) and [`backend/docs/PHASE5_TESTING_AND_OPTIMISATION.md`](backend/docs/PHASE5_TESTING_AND_OPTIMISATION.md).

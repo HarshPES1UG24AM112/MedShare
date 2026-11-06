@@ -121,7 +121,7 @@ MedShare's second database is **Neo4j**, a graph database (NoSQL). PostgreSQL st
    * In **Distance between facilities**, choose **FAC-003**: there is no direct link, so the page draws the shortest legal chain, FAC-009 → FAC-012 → FAC-003 (47.7 km). That is `shortestPath` in Cypher.
    * Switch to **Delivery corridors** (completed transfers, thicker = more units) and **Distances**.
    * In **Who may supply …**, pick *Paracetamol*: one graph query joins supply links to stock.
-2. Open Neo4j Browser at http://localhost:7474 (user `neo4j`, password `NEO4J_PASSWORD` from `.env`) and run:
+2. Signed in as **`admin@medshare.health`**, switch the Network map to **Query explorer (Cypher)**. It opens on G14, the whole network drawn as a graph. Click **G16** (shortest supply chain) and **G18** (a facility's shortages and suppliers), then click a node to show its properties. Type a write such as `MATCH (f:Facility) SET f.name = 'x'` and run it: *Query not run · READ_ONLY*, because Neo4j itself refuses writes in a read transaction. (Neo4j Browser at http://localhost:7474 works too: user `neo4j`, password `NEO4J_PASSWORD` from `.env`.) Then run:
 
 ```cypher
 // The whole network: facilities, organisations and who may supply whom
@@ -134,7 +134,7 @@ RETURN d.code, m.name, collect(s.code)[0] AS supplier, collect(c.km)[0] AS km LI
 ```
 
 3. Say: *the same question in SQL needs four joins and two function calls per pair* (show [DBMS §15.3](../DBMS_DOCUMENTATION.md#153-same-question-two-databases)). *Both databases return the same 76 answers; the API tests prove the graph's supply links equal what PostgreSQL computes.*
-4. Optionally, in a terminal: `cd backend && npm run graph:queries` runs all 13 documented Cypher queries.
+4. Optionally, in a terminal: `cd backend && npm run graph:queries` runs all 18 documented Cypher queries.
 
 ## Likely questions
 

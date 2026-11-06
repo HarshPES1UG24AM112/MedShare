@@ -121,5 +121,7 @@ export const httpApi: MedShareApi = {
     distance: (from, to) => data(http.get(endpoints.network.distance, q({ from, to }))),
     suppliers: (facilityId, medicineId) => data(http.get(endpoints.network.suppliers(facilityId), q({ medicineId }))),
     sync: () => data(http.post(endpoints.network.sync, {})),
+    queries: () => data(http.get(endpoints.network.queries)),
+    runQuery: (input) => data(http.post(endpoints.network.runQuery, input)),
   },
 };

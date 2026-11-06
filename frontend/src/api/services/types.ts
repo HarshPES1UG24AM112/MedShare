@@ -1,5 +1,7 @@
 import type {
   AnalyticsOverview,
+  CypherQuery,
+  CypherResult,
   NetworkDistance,
   NetworkGraph,
   NetworkStatus,
@@ -165,5 +167,7 @@ export interface MedShareApi {
     distance(from: number, to: number): Promise<NetworkDistance>;
     suppliers(facilityId: number, medicineId?: number): Promise<NetworkSuppliers>;
     sync(): Promise<{ job: string; syncedAt: string }>;
+    queries(): Promise<CypherQuery[]>;
+    runQuery(input: { id: string } | { statement: string }): Promise<CypherResult>;
   };
 }

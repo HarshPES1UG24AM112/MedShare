@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Database, RefreshCw, Snowflake } from 'lucide-react';
 import { ApiError, type NetworkFacility, type NetworkGraph } from '@/api';
 import { useCurrentUser } from '@/auth/AuthContext';
@@ -11,6 +11,7 @@ import { useFacilityDirectory, useMedicines, useNetworkDistance, useNetworkGraph
 import { fmtDate, fmtNumber, fmtRelative } from '@/lib/format';
 import { FACILITY_TYPE_LABEL } from '@/lib/labels';
 import { NetworkMap, orgColours, type MapLayer } from './NetworkMap';
+import { QueryExplorer } from './QueryExplorer';
 
 const LAYERS: { value: MapLayer; label: string }[] = [
   { value: 'supply', label: 'Supply links' },
@@ -33,6 +34,9 @@ export default function NetworkPage() {
   const [layer, setLayer] = useState<MapLayer>('supply');
   const [selectedId, setSelectedId] = useState<number | undefined>(scoped);
   const [toId, setToId] = useState<number | undefined>();
+  const [params, setParams] = useSearchParams();
+  // Cypher sees every facility, so the explorer tab is only offered to platform-wide accounts (the API enforces it too).
+  const explorer = user.platformScope && params.get('view') === 'explorer';
 
   useEffect(() => {
     if (selectedId === undefined && graph.data) setSelectedId(scoped ?? user.scopeFacilityIds[0] ?? graph.data.facilities[0]?.id);
@@ -69,7 +73,21 @@ export default function NetworkPage() {
         }
       />
 
-      {graph.error ? (
+      {user.platformScope && (
+        <Segmented
+          className="mb-4 w-fit"
+          value={explorer ? 'explorer' : 'map'}
+          onChange={(v) => setParams(v === 'explorer' ? { view: 'explorer' } : {}, { replace: true })}
+          options={[
+            { value: 'map', label: 'Map' },
+            { value: 'explorer', label: 'Query explorer (Cypher)' },
+          ]}
+        />
+      )}
+
+      {explorer ? (
+        <QueryExplorer />
+      ) : graph.error ? (
         <Card>
           <ErrorState error={graph.error} onRetry={() => graph.refetch()} />
         </Card>

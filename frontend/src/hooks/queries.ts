@@ -66,6 +66,7 @@ export const qk = {
   user: (id: number) => ['users', 'detail', id] as const,
   roles: ['reference', 'roles'] as const,
   networkStatus: ['network', 'status'] as const,
+  networkQueries: ['network', 'queries'] as const,
   networkGraph: ['network', 'graph'] as const,
   networkDistance: (from: number, to: number) => ['network', 'distance', from, to] as const,
   networkSuppliers: (facilityId: number, medicineId?: number) => ['network', 'suppliers', facilityId, medicineId ?? 'all'] as const,
@@ -195,6 +196,12 @@ export const useNetworkSuppliers = (facilityId?: number, medicineId?: number) =>
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
+
+export const useCypherCatalogue = (enabled = true) =>
+  useQuery({ queryKey: qk.networkQueries, queryFn: () => api.network.queries(), staleTime: REFERENCE, enabled });
+
+/** Read-only Cypher, run on demand (a mutation so each Run is a fresh request, not a cached read). */
+export const useRunCypher = () => useMutation({ mutationFn: (input: { id: string } | { statement: string }) => api.network.runQuery(input) });
 
 export const useAnalytics = (p: AnalyticsParams) =>
   useQuery({ queryKey: qk.analytics(p), queryFn: () => api.analytics.overview(p), placeholderData: keepPreviousData });

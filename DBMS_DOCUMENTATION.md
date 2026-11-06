@@ -786,7 +786,7 @@ Both return the same 76 pairs on the seeded data (identical MD5 fingerprint of t
 
 ### 15.4 Cypher query catalogue
 
-Thirteen queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher); `npm run graph:queries` runs them all. Paste any into Neo4j Browser (http://localhost:7474, user `neo4j`, password `NEO4J_PASSWORD` from `.env`) to see the result drawn as a graph.
+Eighteen queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries.cypher); `npm run graph:queries` runs them all through the same read-only runner the app uses. G01–G13 answer questions with values; G14–G18 return paths, so they draw as graphs. Run any of them in the app's **Query explorer** (§15.6), or in Neo4j Browser (http://localhost:7474, user `neo4j`, password `NEO4J_PASSWORD` from `.env`).
 
 | # | Question | Graph technique |
 |---|---|---|
@@ -803,12 +803,28 @@ Thirteen queries in [`backend/db/graph/queries.cypher`](backend/db/graph/queries
 | G11 | Usable stock rolled up to districts | Variable-length `PART_OF*0..` walk |
 | G12 | Facilities within 25 km as the crow flies | Spatial `point.distance` |
 | G13 | Expiring stock a legal partner is short of | Pattern + date arithmetic |
+| G14 | The whole network of legal supply links | Paths `RETURN p` (drawn as a graph) |
+| G15 | Facilities, their organisations and agreements | `UNION ALL` of two path patterns |
+| G16 | Shortest legal supply chain FAC-009 → FAC-003 | `shortestPath` returned as a path |
+| G17 | The region tree with its facilities | Variable-length path to the root |
+| G18 | A facility's critical shortages and the suppliers holding them | Cyclic five-hop path |
 
 ### 15.5 API, interface and tests
 
 * **API** (`/api/v1/network/…`, [API_CONTRACT §2](API_CONTRACT.md#network-graph-read-model)): status, the whole graph for the map, distance plus shortest supply chain, and suppliers of a facility (optionally holding one medicine). Facility scope applies: shortages and suppliers are shown only for facilities the user may see.
 * **Interface:** the **Network map** page draws the facilities by their real direction from each other, with three layers (supply links, delivery corridors, distances), a distance tool that draws the shortest legal supply chain, and a supplier finder.
-* **Tests:** 8 API tests against real Neo4j (graph equals PostgreSQL's supply set, distances equal `fn_distance_km`, shortest chain, scope, admin-only sync) and 4 frontend tests for the map. The tests rebuild the graph from the test database and restore the development graph afterwards, because Neo4j Community has a single database.
+* **Tests:** 11 API tests against real Neo4j (graph equals PostgreSQL's supply set, distances equal `fn_distance_km`, shortest chain, scope, admin-only sync, and the explorer's read-only and allow-list rules) and 8 frontend tests (map, force layout, result formatting). The tests rebuild the graph from the test database and restore the development graph afterwards, because Neo4j Community has a single database.
 
 **Limitations.** The graph is a snapshot between syncs, not live. Neo4j Community has no role-based access control, so facility scope is enforced by the API, not the graph database. Distances are still the great-circle × 1.3 estimate, not road routing.
+
+### 15.6 Query explorer (Cypher inside MedShare)
+
+The Network map has a second tab, **Query explorer (Cypher)**, a small Neo4j Browser inside the app. Pick a documented query or type one, press **Run** (or Ctrl+Enter), and see the result as a **graph** (force-directed, nodes coloured by label, drag to rearrange, click for properties) or a **table**.
+
+| Safeguard | How |
+|---|---|
+| Read-only | The statement runs in a Neo4j **READ** transaction, so the database itself refuses `CREATE`, `SET`, `DELETE`, `MERGE` (`422 READ_ONLY`). Tested: an attempted `SET` leaves the facility unchanged. |
+| No server access | `CALL` procedures, `LOAD CSV`, `SHOW` and `USE` are refused before reaching Neo4j (`422 CYPHER_NOT_ALLOWED`); `CALL { … }` subqueries are allowed. |
+| Bounded | 5-second transaction timeout (`422 QUERY_TIMEOUT`), at most 1,000 rows returned, statements up to 4,000 characters. |
+| Who | Platform-wide accounts only (system administrator, platform auditor), because Cypher reads every facility's stock and shortages; others get 403 and do not see the tab. |
 

@@ -1008,3 +1008,33 @@ export interface NetworkSuppliers {
   medicineId: number | null;
   suppliers: NetworkSupplier[];
 }
+
+export interface CypherQuery {
+  id: string;
+  title: string;
+  statement: string;
+}
+
+export interface GraphNode {
+  id: string;
+  labels: string[];
+  properties: Record<string, unknown>;
+}
+
+export interface GraphRelationship {
+  id: string;
+  type: string;
+  start: string;
+  end: string;
+  properties: Record<string, unknown>;
+}
+
+/** A cell may hold a node `{ node, labels, properties }`, a relationship `{ relationship, type, properties }` or a path `{ path, length }`. */
+export interface CypherResult {
+  syncedAt: string;
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+  graph: { nodes: GraphNode[]; relationships: GraphRelationship[] };
+  ms: number;
+}

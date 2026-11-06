@@ -6,9 +6,11 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { authenticate, currentUser, facilityScope } from '../auth/auth.js';
+import { graphCatalogue } from '../graph/catalogue.js';
+import { runExplorerQuery } from '../graph/explorer.js';
 import { cypher, graphConfigured, int } from '../graph/neo4j.js';
 import { graphCounts } from '../graph/sync.js';
-import { ApiError, notFound } from '../http/errors.js';
+import { ApiError, forbidden, notFound } from '../http/errors.js';
 import { handler, id, idParam } from '../http/helpers.js';
 
 export const router = Router();
@@ -133,5 +135,36 @@ router.get(
       { id: int(facilityId), medicineId: medicineId ? int(medicineId) : null },
     );
     res.json({ syncedAt: info.syncedAt, facilityId, medicineId: medicineId ?? null, suppliers });
+  }),
+);
+
+/* --------------------------------------------------------- query explorer ---- */
+
+// Cypher reads the whole network, every facility's stock and shortages included, so
+// the explorer is for platform-wide accounts only (system administrator, platform auditor).
+function requirePlatformScope(req: Request) {
+  if (!currentUser(req).platformScope) throw forbidden('The query explorer is available to platform-wide accounts only');
+}
+
+router.get(
+  '/network/queries',
+  handler(async (req, res) => {
+    requirePlatformScope(req);
+    res.json(graphCatalogue());
+  }),
+);
+
+router.post(
+  '/network/queries/run',
+  handler(async (req, res) => {
+    requirePlatformScope(req);
+    const b = z
+      .object({ id: z.string().regex(/^G\d{2}$/).optional(), statement: z.string().trim().min(1).max(4000).optional() })
+      .refine((v) => Boolean(v.id) !== Boolean(v.statement), { path: ['statement'], message: 'Send either a catalogue id or a statement' })
+      .parse(req.body);
+    const statement = b.id ? graphCatalogue().find((q) => q.id === b.id)?.statement : b.statement;
+    if (!statement) throw notFound('Query');
+    const info = await syncInfo();
+    res.json({ syncedAt: info.syncedAt, ...(await runExplorerQuery(statement)) });
   }),
 );

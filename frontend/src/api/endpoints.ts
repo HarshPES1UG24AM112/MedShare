@@ -92,5 +92,7 @@ export const endpoints = {
     distance: '/network/distance',
     suppliers: (facilityId: number) => `/network/facilities/${facilityId}/suppliers`,
     sync: '/admin/jobs/graph-sync',
+    queries: '/network/queries',
+    runQuery: '/network/queries/run',
   },
 } as const;

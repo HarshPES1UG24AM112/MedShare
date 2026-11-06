@@ -6,33 +6,17 @@
  * - queries: runs every documented Cypher query in db/graph/queries.cypher
  *            and prints its result, like `npm run db:queries` does for SQL.
  */
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { pool } from '../src/db/pool.js';
-import { closeGraph, cypher } from '../src/graph/neo4j.js';
+import { graphCatalogue } from '../src/graph/catalogue.js';
+import { runExplorerQuery } from '../src/graph/explorer.js';
+import { closeGraph } from '../src/graph/neo4j.js';
 import { syncGraph } from '../src/graph/sync.js';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const QUERIES = join(here, '../db/graph/queries.cypher');
-
-/** Splits the catalogue on its `// G01: title` headers. */
-function catalogue() {
-  const text = readFileSync(QUERIES, 'utf8');
-  return text
-    .split(/^(?=\/\/ G\d{2}:)/m)
-    .filter((b) => b.startsWith('// G'))
-    .map((b) => {
-      const lines = b.trim().split('\n');
-      const statement = lines.filter((l) => !l.trim().startsWith('//')).join('\n').trim().replace(/;$/, '');
-      return { title: lines[0].slice(3), statement };
-    });
-}
 
 const show = (v: unknown): string => {
   if (v === null || v === undefined) return '—';
   if (Array.isArray(v)) return v.map(show).join(' → ');
-  if (typeof v === 'object' && 'toString' in (v as object) && (v as object).constructor?.name !== 'Object') return String(v);
+  if (typeof v === 'object' && 'path' in (v as object)) return (v as { path: string[] }).path.join(' → ');
+  if (typeof v === 'object' && 'node' in (v as object)) return `(${(v as { labels: string[] }).labels.join(':')})`;
   return typeof v === 'object' ? JSON.stringify(v) : String(v);
 };
 
@@ -44,16 +28,17 @@ async function main() {
     console.log('  nodes:        ', Object.entries(r.nodes).map(([k, n]) => `${k} ${n}`).join(', '));
     console.log('  relationships:', Object.entries(r.relationships).map(([k, n]) => `${k} ${n}`).join(', '));
   } else if (cmd === 'queries') {
+    // Through the explorer's read-only runner, so every documented query is proven to work there too.
     let failed = 0;
-    for (const q of catalogue()) {
+    for (const q of graphCatalogue()) {
       try {
-        const rows = await cypher(q.statement);
-        console.log(`\n✓ ${q.title}  (${rows.length} row${rows.length === 1 ? '' : 's'})`);
-        for (const row of rows.slice(0, 5)) console.log('   ', Object.entries(row).map(([k, v]) => `${k}=${show(v)}`).join('  '));
+        const { columns, rows } = await runExplorerQuery(q.statement);
+        console.log(`\n✓ ${q.id}: ${q.title}  (${rows.length} row${rows.length === 1 ? '' : 's'})`);
+        for (const row of rows.slice(0, 5)) console.log('   ', columns.map((k, i) => `${k}=${show(row[i])}`).join('  '));
         if (rows.length > 5) console.log(`    … ${rows.length - 5} more`);
       } catch (e) {
         failed++;
-        console.error(`\n✗ ${q.title}\n  ${(e as Error).message}`);
+        console.error(`\n✗ ${q.id}: ${q.title}\n  ${(e as Error).message}`);
       }
     }
     if (failed) process.exitCode = 1;

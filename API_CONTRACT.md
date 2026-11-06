@@ -215,6 +215,8 @@ Answered from Neo4j, which is rebuilt from PostgreSQL (see [DBMS_DOCUMENTATION �
 | GET | `/network/status` | never fails: `{ configured, reachable, syncedAt, source, nodes{label: n}, relationships{type: n}, error? }` |
 | GET | `/network/graph` | `{ syncedAt, source, facilities[{ id, code, name, type, lat, lon, coldChain, radiusKm, active, organizationId, regionName, suppliers, canSupply, criticalShortages, lowShortages }], organisations[], supplyLinks[{ source, destination, km, sameOrg }], roads[{ a, b, km }], corridors[{ source, destination, transfers, units, lastReceivedAt }] }`. `criticalShortages`/`lowShortages` are `null` outside the caller's scope; `corridors` only include deliveries with either end in scope. |
 | GET | `/network/distance?from=&to=` | `{ from, to, routedKm, straightLineKm, fromCanSupplyTo, toCanSupplyFrom, supplyChain: { facilities[], hops, km } \| null }`. `routedKm` = `fn_distance_km` (great-circle × 1.3); `supplyChain` is the shortest chain of supply links (up to 4 hops). Same facility twice → 422. |
+| GET | `/network/queries` | platform-wide accounts only (403 otherwise). The documented Cypher catalogue: `[{ id: 'G01', title, statement }]`. |
+| POST | `/network/queries/run` | platform-wide accounts only. Body `{ id }` (a catalogue query) **or** `{ statement }` (≤ 4,000 chars). → `{ syncedAt, columns[], rows[][], truncated, ms, graph: { nodes[{ id, labels, properties }], relationships[{ id, type, start, end, properties }] } }`. A cell holding a node is `{ node, labels, properties }`, a relationship `{ relationship, type, properties }`, a path `{ path: [codes], length }`. Runs in a READ transaction with a 5 s timeout and a 1,000-row cap. 422 `READ_ONLY` (would write), `CYPHER_NOT_ALLOWED` (`CALL` procedure, `LOAD CSV`, `SHOW`, `USE`), `CYPHER_ERROR` (syntax), `QUERY_TIMEOUT`. |
 | GET | `/network/facilities/:id/suppliers?medicineId=` | scope-checked (403 outside scope). `{ syncedAt, facilityId, medicineId, suppliers[{ id, code, name, type, coldChain, organizationName, km, sameOrg, usable, nearestExpiry }] }`, nearest first; with `medicineId`, only suppliers holding it. |
 
 ### Audit & administration
@@ -269,4 +271,5 @@ New, additive endpoints; nothing existing changed.
 |---|---|---|
 | `GET /network/status`, `/network/graph`, `/network/distance`, `/network/facilities/:id/suppliers` | New, read-only, answered from Neo4j | The project needed a NoSQL database; the facility network is a graph. |
 | `POST /admin/jobs/graph-sync` | New job name | Rebuild the graph on demand from PostgreSQL. |
+| `GET /network/queries`, `POST /network/queries/run` | New: read-only Cypher for platform-wide accounts | The in-app Query explorer. |
 

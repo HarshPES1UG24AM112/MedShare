@@ -86,6 +86,56 @@ describe('facility network (Neo4j graph read model)', () => {
     expect(graph.find((f) => f.id === other)!.criticalShortages).toBeNull();
   });
 
+  it('query explorer: lists the documented queries and runs one into a table and a graph', async () => {
+    const api = await as(users.admin);
+    const list = (await api.get('/network/queries')).body as { id: string }[];
+    expect(list.map((q) => q.id)).toEqual(Array.from({ length: list.length }, (_, i) => `G${String(i + 1).padStart(2, '0')}`));
+    expect(list.length).toBeGreaterThanOrEqual(18);
+
+    const chain = await api.post('/network/queries/run', { id: 'G16' });
+    expect(chain.status).toBe(200);
+    expect(chain.body.columns).toEqual(['p']);
+    expect(chain.body.rows[0][0].path).toEqual(['FAC-009', 'FAC-012', 'FAC-003']);
+    expect(chain.body.graph.nodes).toHaveLength(3);
+    expect(chain.body.graph.relationships.map((r: { type: string }) => r.type)).toEqual(['CAN_SUPPLY', 'CAN_SUPPLY']);
+
+    // Every relationship in the graph view joins two nodes that are also in it.
+    const net = (await api.post('/network/queries/run', { id: 'G14' })).body;
+    const ids = new Set(net.graph.nodes.map((n: { id: string }) => n.id));
+    expect(net.graph.relationships).toHaveLength(net.rows.length);
+    expect(net.graph.relationships.every((r: { start: string; end: string }) => ids.has(r.start) && ids.has(r.end))).toBe(true);
+  });
+
+  it('query explorer: runs a typed statement, keeps the columns of an empty result, and reports Cypher errors', async () => {
+    const api = await as(users.auditor);
+    const ok = await api.post('/network/queries/run', { statement: "MATCH (f:Facility {code: 'FAC-001'}) RETURN f.name AS name, f.radiusKm AS radius" });
+    expect(ok.body.rows).toEqual([['Bengaluru Central District Hospital', 120]]);
+    const empty = await api.post('/network/queries/run', { statement: "MATCH (f:Facility {code: 'NOPE'}) RETURN f.name AS name" });
+    expect(empty.body).toMatchObject({ columns: ['name'], rows: [] });
+    const bad = await api.post('/network/queries/run', { statement: 'MATCH (f:Facility RETURN f' });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.code).toBe('CYPHER_ERROR');
+  });
+
+  it('query explorer: is read-only and refuses procedures, LOAD CSV and non-platform users', async () => {
+    const api = await as(users.admin);
+    const write = await api.post('/network/queries/run', { statement: "MATCH (f:Facility {code: 'FAC-001'}) SET f.name = 'Hacked' RETURN f" });
+    expect(write.status).toBe(422);
+    expect(write.body.error.code).toBe('READ_ONLY');
+    const [{ name }] = (await api.post('/network/queries/run', { statement: "MATCH (f:Facility {code: 'FAC-001'}) RETURN f.name AS name" })).body.rows.map(
+      (r: string[]) => ({ name: r[0] }),
+    );
+    expect(name).toBe('Bengaluru Central District Hospital');
+    for (const statement of ['CALL dbms.listConfig()', "LOAD CSV FROM 'http://example.com/x.csv' AS r RETURN r", 'SHOW USERS']) {
+      const res = await api.post('/network/queries/run', { statement });
+      expect(res.body.error.code).toBe('CYPHER_NOT_ALLOWED');
+    }
+    const subquery = await api.post('/network/queries/run', { statement: 'CALL { MATCH (f:Facility) RETURN count(f) AS n } RETURN n' });
+    expect(subquery.body.rows).toEqual([[15]]);
+    expect((await (await as(users.fm('FAC-001'))).get('/network/queries')).status).toBe(403);
+    expect((await (await as(users.org1Admin)).post('/network/queries/run', { id: 'G01' })).status).toBe(403);
+  });
+
   it('rebuilds on demand through the admin job, for system administrators only', async () => {
     expect((await (await as(users.im('FAC-002'))).post('/admin/jobs/graph-sync')).status).toBe(403);
     const res = await (await as(users.admin)).post('/admin/jobs/graph-sync');
